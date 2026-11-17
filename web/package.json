@@ -1,0 +1,9 @@
+{
+  "name": "study-go-web",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs", "build:pages": "node build.mjs --pages", "start": "python3 ../scripts/study_web.py" },
+  "dependencies": { "markdown-it": "^14.1.0", "react": "^19.2.0", "react-dom": "^19.2.0" },
+  "devDependencies": { "esbuild": "^0.28.0" },
+  "engines": { "node": ">=18" }
+}

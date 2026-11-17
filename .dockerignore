@@ -1,0 +1,7 @@
+.git
+**/.DS_Store
+java/target
+web/node_modules
+web/dist
+web/dist-pages
+.study

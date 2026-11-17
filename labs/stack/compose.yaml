@@ -1,0 +1,113 @@
+name: study-go
+
+# & 定义可复用的 YAML 配置，<<: *go-image 把配置合并进 Go 的两个服务。
+x-go-image: &go-image
+  image: study-go-order-lab
+  build:
+    context: ../..
+    dockerfile: labs/stack/go.Dockerfile
+
+x-orders-database: &orders-database
+  # postgres 是 Compose 网络里的服务名。study / study 是本地实验用的账号。
+  ORDERS_DATABASE_URL: "postgres://study:study@postgres:5432/orders?sslmode=disable"
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: study
+      POSTGRES_PASSWORD: study
+      POSTGRES_DB: orders
+    volumes:
+      # 命名卷里的数据在容器重建后保留。init.sql 仅在数据目录为空时执行。
+      - postgres-data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/01-study.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "study", "-d", "orders"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:7.4
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:4.2-management
+    hostname: study-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: study
+      RABBITMQ_DEFAULT_PASS: study
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    ports:
+      # 左边是本机的管理页端口，右边是容器端口。127.0.0.1 将入口限制在本机。
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+
+  api:
+    <<: *go-image
+    command: ["api"]
+    environment:
+      <<: *orders-database
+      REDIS_ADDR: "redis:6379"
+      ORDERS_LISTEN: ":8082"
+    ports:
+      - "127.0.0.1:8082:8082"
+    healthcheck:
+      # Compose 的 --wait 会等 readyz 返回成功。
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8082/readyz"]
+      interval: 10s
+      timeout: 2s
+      retries: 3
+      start_period: 5s
+    depends_on:
+      # service_healthy 会等待健康检查通过，再启动依赖方。
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  relay:
+    <<: *go-image
+    command: ["relay"]
+    restart: on-failure
+    environment:
+      <<: *orders-database
+      # %2F 显式指定名为 / 的默认虚拟主机，Go 和 Java 客户端都能正确识别。
+      RABBITMQ_URL: "amqp://study:study@rabbitmq:5672/%2F"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+  notifications:
+    build:
+      context: ../..
+      dockerfile: labs/stack/java.Dockerfile
+    restart: on-failure
+    environment:
+      RABBITMQ_URL: "amqp://study:study@rabbitmq:5672/%2F"
+      NOTIFICATIONS_JDBC_URL: "jdbc:postgresql://postgres:5432/notifications?connectTimeout=3&socketTimeout=5"
+      NOTIFICATIONS_DB_USER: study
+      NOTIFICATIONS_DB_PASSWORD: study
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      relay:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  rabbitmq-data:

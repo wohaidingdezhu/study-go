@@ -1,0 +1,236 @@
+[
+  {
+    "id": "http",
+    "title": "用同一请求走通 Go 和 Java",
+    "guide": "docs/02-http.md · 亲手创建订单并重试",
+    "practice": "先写出预测，再在 Go 8080 和 Java 8081 的内存服务各做一次商品查询、无效数量下单和正常下单。沿 handler 找到存储层。",
+    "evidence": "两边的 200、400、201 和 Location。说明路径参数、JSON 请求体与请求头各放了什么。",
+    "cards": [
+      {
+        "id": "http-contract",
+        "question": "GET /products/999、合法 JSON 但 quantity=0、正常新建订单分别预期得到哪个状态码？",
+        "answer": "404 表示商品没找到，400 表示订单数据未通过校验，201 表示订单已创建。Location 可以用来查询新订单。",
+        "repair": "只改请求中的 quantity 为 0，再用 curl -i 对照响应状态行和正文。"
+      },
+      {
+        "id": "http-layers",
+        "question": "画出下单调用链。JSON 解析、库存规则、HTTP 状态映射分别在哪层？Go 和 Java 的业务错误怎样返回？",
+        "answer": "HTTP 层解析参数和 JSON，存储层判断库存等规则，HTTP 层把业务结果映射为状态码。Go 返回 error 并用 errors.Is 匹配，Java 抛 Rejected 并在 HTTP 层捕获。",
+        "repair": "从 go/order/http.go 和 OrderServer.java 各找一处状态映射，继续跳转到存储方法。"
+      }
+    ]
+  },
+  {
+    "id": "stock",
+    "title": "分清零库存和缺失键",
+    "guide": "exercises/stock-lookup/README.md · 同一业务规则的双语言练习",
+    "practice": "先跑 Go 和 Java 的失败用例，合上参考解实现其中一版，再凭相同规则翻译另一版。加一个商品 ID 的边界样例。",
+    "evidence": "两边原有检查通过，并解释 0 件库存为什么仍是一次成功查询。",
+    "cards": [
+      {
+        "id": "stock-absence",
+        "question": "手写 Go map 的存在性检查和 Java OptionalInt 的两种返回，覆盖零库存和商品不存在。",
+        "answer": "Go 用 stock, ok := stocks[id]，存在且售罄时是 0, true。Java 返回 OptionalInt.of(0)，查无商品时返回 OptionalInt.empty()。",
+        "repair": "分别写一个已售罄和一个缺失商品的断言，再运行两边练习检查。"
+      }
+    ]
+  },
+  {
+    "id": "idempotency",
+    "title": "用测试把下单重试契约钉住",
+    "guide": "docs/02-http.md · 下单重试 | docs/08-tests.md · 两语言测试",
+    "practice": "在两套内存 API 对同一订单发送原样重试和同键改参。给其中一个已有测试加库存断言，再把同一断言迁移到另一种语言。",
+    "evidence": "首次 201、重放 200 且 ID 相同、同键改参 409。库存只扣一次，Go 和 Java 测试通过。",
+    "cards": [
+      {
+        "id": "idempotency-timeout",
+        "question": "客户端超时后，为什么保留原幂等键和原参数？重试返回成功时还要核对什么？",
+        "answer": "服务器可能已经提交。复用键和原参数能拿回原订单。应核对订单 ID 一致、库存只扣一次。",
+        "repair": "在内存服务原样发两次 POST，再读取库存并比对两个响应 ID。"
+      },
+      {
+        "id": "idempotency-conflict",
+        "question": "同一个键从 quantity=1 改成 quantity=2，为什么两次结果不能合并？怎样和库存不足区分？",
+        "answer": "参数已经变成另一笔业务请求，应返回 409 idempotency_conflict。库存不足同为 409，正文错误码是 out_of_stock。",
+        "repair": "分别构造两类 409，逐项记录错误码和修改前后的库存。"
+      }
+    ]
+  },
+  {
+    "id": "concurrency",
+    "title": "从并发扣库存看进程内的锁",
+    "guide": "docs/01-languages.md · 并发扣库存 | docs/03-database.md · 并发下单",
+    "practice": "改两版并发演示为 1 件库存、20 次尝试，重复三次。指明 Go Mutex 和 Java synchronized 保护的临界区。",
+    "evidence": "每次恰好 1 次成功，最终库存为 0。能解释多进程为何要把约束放到共享数据库。",
+    "cards": [
+      {
+        "id": "concurrency-boundary",
+        "question": "如果只锁扣减操作，先在锁外读库存，会发生什么？加第二个 API 实例又会怎样？",
+        "answer": "两个线程可能同时读到最后一件库存，随后都扣减。检查和修改要在同一个临界区。不同 API 实例各有自己的锁，要依赖数据库的条件更新和事务。",
+        "repair": "画出两个并发请求都读到 stock=1 的时间线，再标出临界区的起止位置。"
+      }
+    ]
+  },
+  {
+    "id": "database",
+    "title": "用 PostgreSQL 保证订单正确",
+    "guide": "docs/03-database.md · 事务和并发 | docs/10-sql-performance.md · 用两个连接观察锁等待",
+    "practice": "在独立练习栈查一笔订单的库存、订单、outbox。再用两个 SQL 会话模拟争抢最后一件库存。",
+    "evidence": "一笔订单对应一条 outbox。指出失败时回滚的写入，并记录一次锁等待或条件更新影响行数。",
+    "cards": [
+      {
+        "id": "database-transaction",
+        "question": "库存已经扣减，但写 outbox 失败。该回滚哪些内容？画出提交边界。",
+        "answer": "同一事务回滚订单、库存扣减和 outbox。提交成功之后 relay 才能读到可发布的 outbox。",
+        "repair": "对照 labs/stack/store.go，把 BEGIN、三条写入与 COMMIT 各标一次。"
+      },
+      {
+        "id": "database-atomic",
+        "question": "两个请求竞争最后一件库存，WHERE stock >= quantity 为什么有效，怎样知道谁成功？",
+        "answer": "条件判断和扣减在同一条 UPDATE 中，PostgreSQL 串行修改同一行。在本项目的 READ COMMITTED 下，等到锁的更新会重新检查条件。影响行数为 0 表示未扣到。",
+        "repair": "用两个 psql 会话在练习库中复现等待，提交后检查第二条 UPDATE 的影响行数。"
+      }
+    ]
+  },
+  {
+    "id": "pagination",
+    "title": "让列表能安全翻页",
+    "guide": "exercises/order-history/README.md | docs/16-order-history-api.md | docs/10-sql-performance.md",
+    "practice": "分别补全两版游标练习，跑既有测试，再请求真实接口的前两页。额外验证已经是末页时 nextCursor 的值。",
+    "evidence": "两边边界测试通过，真实 API 的两页订单 ID 无重叠，末页 nextCursor 为 null。",
+    "cards": [
+      {
+        "id": "pagination-cursor",
+        "question": "ID 按倒序排，上一页最后一项 ID 为 7。下一页用什么条件？为什么多读一条？",
+        "answer": "用 id < 7 且仍按 ID 倒序。读 limit+1 条判断是否还有下一页，游标取当前返回页最后一项的 ID。",
+        "repair": "手列 ID 9、8、7、6、5，用 limit=2 算出每页和游标。"
+      },
+      {
+        "id": "pagination-filter",
+        "question": "给订单列表加商品筛选时，筛选应该发生在 limit 之前还是之后？给一个会出错的例子。",
+        "answer": "先按商品和游标过滤，再取 limit+1。例如最新两单都不是目标商品，先限两条会错误返回空页，尽管后面还有目标订单。",
+        "repair": "给临时测试准备两种商品交错的订单，断言目标商品第一页能填满。"
+      }
+    ]
+  },
+  {
+    "id": "cache",
+    "title": "验证缓存命中、失效和失败回源",
+    "guide": "docs/04-cache.md | docs/11-cache-reliability.md · 并发回填 | docs/17-observability-and-probes.md",
+    "practice": "在独立练习栈连续读取商品、写入一单、再次读取。暂停 Redis 时再读一次，用日志解释每个阶段。",
+    "evidence": "拿到 MISS、HIT、写后失效和 BYPASS 的日志，以及 Redis 暂停时商品接口的响应。",
+    "cards": [
+      {
+        "id": "cache-aside",
+        "question": "Cache-Aside 的读路径和写路径是什么？Redis 对商品读取不可用时，本项目如何响应？",
+        "answer": "读先查 Redis，MISS 读 PostgreSQL 并回填。写订单提交后尝试删除商品缓存。Redis 不可用时读直接回源，数据库可用即可返回商品。",
+        "repair": "在练习栈触发一次 BYPASS，按请求 ID 找到日志并核对 HTTP 状态。"
+      },
+      {
+        "id": "cache-stale",
+        "question": "写库后删缓存，旧库存仍可能被谁写回来？画出操作顺序。",
+        "answer": "并发读先从库取得旧值，写请求随后提交并删除缓存，读请求最后才回填旧值。TTL 限制条目的存活，库存扣减的最终校验仍由数据库执行。",
+        "repair": "写出读旧值、写库提交、删缓存、回填旧值四步，并标出哪一步晚到了。"
+      }
+    ]
+  },
+  {
+    "id": "messaging",
+    "title": "用 Go 发布和 Java 消费闭合一笔订单",
+    "guide": "docs/05-messaging.md | docs/07-trace-an-order.md | docs/15-capstone.md · 验证已有链路",
+    "practice": "在练习栈暂停 Java 通知服务，下单后观察队列积压，恢复消费并检查通知表。用同一个事件 ID 核对 outbox 和通知。",
+    "evidence": "暂停时消息待消费，恢复后通知行可查。订单 ID 和事件 ID 沿链路对应。",
+    "cards": [
+      {
+        "id": "messaging-duplicate",
+        "question": "Go relay 收到发布确认后立刻崩溃，Java 会不会看到同一事件两次？用什么去重？",
+        "answer": "若 relay 还没保存 published_at，重启后会再次尝试发布。Java 消费者用事件 ID 和数据库唯一约束去重。",
+        "repair": "各指出一个位置，分别对应 Go 标记已发布与 Java 按事件 ID 去重。"
+      },
+      {
+        "id": "messaging-ack",
+        "question": "Java 消费者应该在通知写库前 ACK 还是写库后 ACK？两个崩溃窗口各会怎样？",
+        "answer": "写库成功后 ACK。提前 ACK 再崩溃会丢通知。写库后、ACK 前崩溃可能重投，唯一约束让重投不会新增第二行。",
+        "repair": "画出接收、持久化、ACK，并分别在相邻两步之间插入一次崩溃。"
+      }
+    ]
+  },
+  {
+    "id": "reliability",
+    "title": "用总超时预算和日志定位慢请求",
+    "guide": "docs/09-service-reliability.md | docs/13-microservices-in-practice.md | docs/17-observability-and-probes.md",
+    "practice": "用 Go 的超时实验制造一次慢响应和一次临时 503。再观察练习栈的两个探针，用请求 ID 找到对应的访问日志。",
+    "evidence": "记录尝试次数、最终状态与总耗时，能解释超时后为何停止和如何区分进程存活、服务就绪。",
+    "cards": [
+      {
+        "id": "reliability-budget",
+        "question": "总预算 500ms，第一次已经耗了 400ms，第二次可以再等 500ms 吗？下单重试前需要什么前提？",
+        "answer": "剩余预算约 100ms，还要计入等待间隔。取消要传给下游。写请求重试要有自身幂等性，或复用能够防重的幂等键。",
+        "repair": "用第 09 章的延迟实验改一次超时预算，在日志找实际尝试次数。"
+      },
+      {
+        "id": "reliability-probes",
+        "question": "进程还活着但 PostgreSQL 不可用，/livez 和 /readyz 应该各返回什么？先看哪条链路？",
+        "answer": "/livez 返回 200，/readyz 返回 503。先查 API 到 PostgreSQL 的连接和就绪日志，再用请求 ID 对照失败请求。",
+        "repair": "在练习栈验证两个探针并保存一条带请求 ID 的日志。"
+      }
+    ]
+  },
+  {
+    "id": "project",
+    "title": "独立交付订单列表的商品筛选",
+    "guide": "docs/15-capstone.md · 给订单历史加商品筛选",
+    "practice": "独立设计 HTTP 契约并补 Go 内存与 PostgreSQL 实现。在 Go 跑通后把同样的行为迁移到 Java 内存版，沿用相同的请求样例。",
+    "evidence": "正常、空结果、非法参数、跨页四类结果都有证据。两种语言返回同一契约，原订单与通知链路回归通过。",
+    "cards": [
+      {
+        "id": "project-transfer",
+        "question": "筛选发布后出现第二页重复和偶发空页，不看源码先写两条会失败的测试。",
+        "answer": "用 limit=1 翻两页，确认两页不同、游标为严格小于。准备两种商品交错的数据，确认筛选发生在取页之前。",
+        "repair": "在 Go 和 Java 各跑一遍相同的 HTTP 样例，保留失败输入至回归测试。"
+      }
+    ]
+  },
+  {
+    "id": "agent-runtime",
+    "title": "证明 Agent 任务能恢复且旧 worker 写不回去",
+    "guide": "labs/agent-runtime/README.md · 验收",
+    "practice": "先画领取、工具执行、状态提交的时间线，再运行 python3 labs/agent-runtime/check.py。一次杀掉 worker，一次暂停后恢复旧 worker。",
+    "evidence": "记录同一任务 ID、恢复前后的租约代次、事件序号和一次被拒绝的旧提交。",
+    "cards": [
+      {
+        "id": "agent-lease-fencing",
+        "question": "旧 worker 卡住时租约过期。新 worker 已领取，旧 worker 恢复后怎样阻止它写回结果？",
+        "answer": "每次领取增加代次。更新检查点时检查任务 ID、运行中状态、租约代次和到期时间。旧代次的 UPDATE 影响零行，因此不能追加事件。",
+        "repair": "打开 worker.go 和 store.go，把领取与提交的谓词分别抄在时序图上。"
+      },
+      {
+        "id": "agent-tool-replay",
+        "question": "工具已返回但检查点未提交，接手后工具是否会再跑？如果工具改成扣款，要增加什么？",
+        "answer": "会从旧检查点重新调用。对扣款需要让外部系统用稳定幂等键去重并可查询结果，单靠本地检查点不能保证外部副作用只发生一次。",
+        "repair": "推演外部扣款成功、进程在记录结果前崩溃这一顺序，并标注幂等键从哪个持久化状态取得。"
+      }
+    ]
+  },
+  {
+    "id": "agent-release",
+    "title": "用评估证据发布、回滚和复盘一个 Agent 版本",
+    "guide": "labs/agent-runtime/README.md · 发布与回滚",
+    "practice": "用回归候选触发门禁，再用合格候选切换版本并回滚。切换前后各提交一个相同输入的任务，暂停 worker 直到完成回滚。",
+    "evidence": "保留失败样本、两条发布审计，以及回滚后两个已接收任务各自的版本和引用数量。",
+    "cards": [
+      {
+        "id": "agent-version-pinning",
+        "question": "A 版本接下任务后默认版本改为 B，原任务恢复时该选哪个版本？省略版本的客户端重试怎么办？",
+        "answer": "继续用任务保存的 A。默认版本决定新任务用哪个实现，幂等重试会根据原键返回已创建的任务和版本。",
+        "repair": "对照 agent_runs.release_id 和 agent_active_release.release_id，指出各自在哪次查询中读取。"
+      },
+      {
+        "id": "agent-release-gate",
+        "question": "为什么评估与发布需要分别控制？怎么防止一条滞后的命令覆盖刚完成的新发布？",
+        "answer": "评估回答候选是否达到固定验收标准。发布在事务里锁定默认版本并比较操作者预期的当前版本，再一起写入变更和评估证据。预期不匹配时拒绝提交。",
+        "repair": "提交一条 expected 已过期的命令，再检查默认版本和发布审计是否变化。"
+      }
+    ]
+  }
+]

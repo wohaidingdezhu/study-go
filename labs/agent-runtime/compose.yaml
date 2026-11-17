@@ -1,0 +1,49 @@
+name: study-go-agent
+# API 和 worker 复用同一镜像与数据库配置，command 决定二进制的运行角色。
+x-runtime: &runtime
+  image: study-go-agent-runtime
+  build:
+    context: ../..
+    dockerfile: labs/agent-runtime/Dockerfile
+  environment:
+    AGENT_DATABASE_URL: "postgres://agent:agent@postgres:5432/agent_runtime?sslmode=disable"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: agent_runtime
+    volumes:
+      - agent-data:/var/lib/postgresql/data
+      # 初始化脚本在首次创建库时运行。重启后继续沿用命名卷中的数据。
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-agent.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "agent", "-d", "agent_runtime"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *runtime
+    command: ["api"]
+    ports:
+      # 只把演示 API 发布到本机回环地址。worker 和 PostgreSQL 通过容器网络通信。
+      - "127.0.0.1:${AGENT_API_PORT:-18084}:8084"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8084/readyz"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+
+  worker:
+    <<: *runtime
+    command: ["worker"]
+    restart: on-failure
+
+volumes:
+  agent-data:
