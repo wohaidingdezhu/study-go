@@ -1,5 +1,6 @@
 .DS_Store
 java/target/
+labs/spring-orders/target/
 .study/
 web/node_modules/
 web/dist/

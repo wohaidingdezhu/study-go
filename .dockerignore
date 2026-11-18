@@ -1,6 +1,7 @@
 .git
 **/.DS_Store
 java/target
+labs/spring-orders/target
 web/node_modules
 web/dist
 web/dist-pages

@@ -114,6 +114,33 @@
     ]
   },
   {
+    "id": "spring-mysql",
+    "title": "用 Spring Boot 和 MySQL 实现同一订单契约",
+    "guide": "labs/spring-orders/README.md | docs/backend-job-roadmap.md",
+    "practice": "先用 18085 的 Java 服务重放一次订单，再运行 python3 labs/spring-orders/check.py。对照 Go PostgreSQL 版，标出 HTTP 入口、数据库事务和请求日志。",
+    "evidence": "记录同键下单的 201 和 200、写入故障后的库存 5 和零行幂等记录，以及数据库停机时的两个探针状态。",
+    "cards": [
+      {
+        "id": "spring-transaction-rollback",
+        "question": "Spring Service 扣了库存，随后订单插入抛出运行时异常。为什么库里仍应该是原库存？",
+        "answer": "通过 Spring 代理进入 @Transactional 方法后，JdbcTemplate 在同一事务执行写入。异常向外传播会回滚库存、订单和临时幂等键。",
+        "repair": "重跑 check.py，对照强制 INSERT 失败前后的库存和两张表行数。"
+      },
+      {
+        "id": "spring-mysql-idempotency",
+        "question": "两个 Spring Boot 实例收到同一个键，为什么只会创建一笔订单？同键改数量会怎样？",
+        "answer": "两边先通过 InnoDB 唯一主键协调同一条幂等键记录，后到的事务读到已提交订单。相同参数返回原订单，同键改参返回 409。",
+        "repair": "用 check.py 对照两个 API 的 201 和 200，再沿 Service 的锁键、扣减、写订单和关联键画出跨实例的时序。"
+      },
+      {
+        "id": "spring-mysql-readiness",
+        "question": "停止 MySQL 后，为什么 Java 的 /livez 和 /readyz 返回不同状态？",
+        "answer": "嵌入式 HTTP 服务还在，/livez 因此返回 200。就绪检查尝试查询 MySQL，连接失败后返回 503。",
+        "repair": "运行隔离验收，保存 200 和 503，再用请求 ID 关联服务日志。"
+      }
+    ]
+  },
+  {
     "id": "cache",
     "title": "验证缓存命中、失效和失败回源",
     "guide": "docs/04-cache.md | docs/11-cache-reliability.md · 并发回填 | docs/17-observability-and-probes.md",

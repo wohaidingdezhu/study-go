@@ -22,6 +22,8 @@ python3 scripts/study.py today
 
 ## 项目与课程
 
+[Go × Java 后端招聘能力地图](docs/backend-job-roadmap.md)将公开岗位样本映射到可验证的练习。Java 可用 [Spring Boot + MySQL](labs/spring-orders/README.md) 实现与 Go 相同的订单契约。
+
 进阶方向是 [AI Agent Infra](docs/agent-infra-roadmap.md)。可以用同一套订单故障场景练任务恢复、发布门禁、版本回滚和事件审计。 [Go Agent Runtime](labs/agent-runtime/README.md)
 
 第一次学后端，可以先完成第 01、02 章。先对照两边的代码，再发一次 HTTP 请求，顺着代码找到处理它的地方。到第 03 章再用 Docker，跟着一笔订单理解每个组件的作用。已经看到了浏览器里的商品 JSON，可以直接做[第 02 章的读取练习](docs/02-http.md#先读懂浏览器里的-json)。
@@ -49,6 +51,7 @@ python3 scripts/study.py today
 | 15 | [综合练习](docs/15-capstone.md) | 在独立环境验证通知恢复，再给订单历史加商品筛选 |
 | 16 | [在真实 API 里翻两页订单](docs/16-order-history-api.md) | 比对 Go 内存、Java 内存和 PostgreSQL 的游标分页 |
 | 17 | [用请求 ID 和探针排查服务](docs/17-observability-and-probes.md) | 按 ID 查日志，实测缓存和数据库故障 |
+| 18 | [Spring Boot × MySQL 订单实战](labs/spring-orders/README.md) | 用同一组用例验证 Java 事务、并发幂等、回滚和探针 |
 
 ## 检查学习环境
 

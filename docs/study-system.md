@@ -63,9 +63,12 @@ python3 scripts/study.py today
 | --- | --- | --- |
 | 双语言订单 API | HTTP 契约、集合和缺失值、错误处理和测试 | 能凭同一组用例在 Go 和 Java 解释或补齐输入校验、幂等和库存检查 |
 | 订单正确性 | 并发临界区、PostgreSQL 事务、约束和游标分页 | 能复现并发竞争，证明不超卖、事务失败会回滚、分页无重复 |
+| 迁移到 Java 技术栈 | Spring MVC、JdbcTemplate、MySQL InnoDB | 同一套订单契约通过，强制写入失败时库存和幂等键一起回滚 |
 | 一笔订单跨服务 | Redis 回源、Go outbox 发布、Java 消费去重、超时和探针 | 能暂停 Redis 或 Java 消费者，依据 HTTP、SQL 和日志解释恢复过程 |
 | 独立交付一个变更 | 为订单列表加入商品筛选，并迁移到两种语言 | 能闭卷写出接口和测试，处理非法值、空页、混合数据和跨页，原链路通过回归 |
 
 进到数据库、缓存或消息队列时，先启动 [独立练习栈](15-capstone.md#启动独立练习环境)。涉及下单、暂停服务和故障注入的命令都在这个栈执行。读章节示例时使用端口 `18082`，把对应的容器命令改用 `bash scripts/practice-stack.sh`。两道待填练习在修改前预期会有测试失败，这是反馈的起点。 [双语言练习](../exercises/README.md)
+
+可以用 `python3 scripts/study.py practice spring-mysql` 进入 Java 技术栈练习。岗位能力和可复现的练法见 [Go × Java 招聘能力地图](backend-job-roadmap.md)。
 
 遇到写不出来时，把题缩小到一个行为。比如出现重复扣库存，先写同键重放的测试，只观察订单 ID 和库存差值。再次练习时改成同键改参，检查错误码和库存都符合约定。综合任务之后，学习工具会推荐 Agent 任务恢复和版本发布两项进阶任务。想从进阶任务开始，可用 `practice agent-runtime` 或 `practice agent-release` 查看验收条件。 [AI Agent Infra 岗位路线](agent-infra-roadmap.md) · [扩展练习](study-workbook.md)

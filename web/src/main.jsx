@@ -9,7 +9,7 @@ const nav = [
 ];
 const stages = [
   { title: '双语言订单 API', description: '接口契约、集合和自动化测试', ids: ['http', 'stock', 'idempotency'] },
-  { title: '订单正确性', description: '并发、事务和查询', ids: ['concurrency', 'database', 'pagination'] },
+  { title: '订单正确性', description: '并发、事务和查询', ids: ['concurrency', 'database', 'pagination', 'spring-mysql'] },
   { title: '跨服务与交付', description: '缓存、消息、可观测和综合实战', ids: ['cache', 'messaging', 'reliability', 'project'] },
   { title: 'Agent Infra', description: '任务恢复、评估、发布与回滚', ids: ['agent-runtime', 'agent-release'] },
 ];
@@ -94,7 +94,7 @@ function App() {
         {nav.map(([id, icon, label]) => <a key={id} href={`#/${id}`} className={route.page === id ? 'selected' : ''}
           aria-current={route.page === id ? 'page' : undefined}><span className="nav-icon" aria-hidden="true">{icon}</span>{label}</a>)}
       </nav>
-      <a className="career" href={guideURL('docs/agent-infra-roadmap.md')}><span>岗位能力地图</span><span aria-hidden="true">↗</span></a>
+      <a className="career" href={guideURL('docs/backend-job-roadmap.md')}><span>岗位能力地图</span><span aria-hidden="true">↗</span></a>
     </aside>
     <main>
       <header className="bar"><span>工作台 <span className="crumb" aria-hidden="true">/</span> <strong>{section}</strong></span><span className="local"><i /> {__PAGES__ ? '浏览器进度' : '本机进度'}</span></header>
