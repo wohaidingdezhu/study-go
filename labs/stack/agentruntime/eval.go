@@ -34,17 +34,9 @@ func Evaluate(ctx context.Context, engine Engine) EvalReport {
 		{"queue_evidence", "RabbitMQ 通知积压，怎样看 outbox？", []string{"outbox-backlog"}},
 		{"no_matching_evidence", "如何烤面包？", []string{}},
 	} {
-		state := Checkpoint{}
-		result := Transition{}
-		for step := 0; step < engine.Release.MaxSteps; step++ {
-			result = engine.Advance(ctx, sample.input, step, state)
-			state = result.State
-			if result.Status != Queued {
-				break
-			}
-		}
-		record(sample.name, result.Status == Succeeded && state.Answer != nil &&
-			slices.Equal(state.Answer.Citations, sample.expected), result.Kind)
+		result := runToCompletion(ctx, engine, sample.input, nil)
+		record(sample.name, result.Status == Succeeded && result.State.Answer != nil &&
+			slices.Equal(result.State.Answer.Citations, sample.expected), result.Kind)
 	}
 
 	// 注册一个测试用工具，但不把它放进发布清单，确认权限判断发生在执行前。
@@ -59,4 +51,19 @@ func Evaluate(ctx context.Context, engine Engine) EvalReport {
 	})
 	record("tool_allowlist", result.Kind == "tool_denied" && result.Status == Failed && !invoked, result.Kind)
 	return report
+}
+
+// runToCompletion 为离线评估和回放提供同一条运行路径，worker 仍逐步持久化 Advance 的结果。
+func runToCompletion(ctx context.Context, engine Engine, input string, observe func(Transition)) Transition {
+	result := Transition{}
+	for step := 0; step < engine.Release.MaxSteps; step++ {
+		result = engine.Advance(ctx, input, step, result.State)
+		if observe != nil {
+			observe(result)
+		}
+		if result.Status != Queued {
+			break
+		}
+	}
+	return result
 }

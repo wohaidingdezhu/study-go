@@ -11,8 +11,11 @@ import (
 )
 
 var (
-	ErrKeyConflict = errors.New("key already belongs to another request")
-	ErrLeaseLost   = errors.New("worker lease is no longer valid")
+	ErrKeyConflict             = errors.New("key already belongs to another request")
+	ErrLeaseLost               = errors.New("worker lease is no longer valid")
+	ErrRunFinished             = errors.New("run already reached a final result")
+	ErrRunNotRetryable         = errors.New("only failed or cancelled runs can be retried")
+	ErrRetryReleaseUnavailable = errors.New("the original release is no longer available")
 )
 
 type Run struct {
@@ -24,6 +27,7 @@ type Run struct {
 	State      Checkpoint `json:"state"`
 	LeaseEpoch int64      `json:"leaseEpoch"`
 	LeaseUntil *time.Time `json:"leaseUntil,omitempty"`
+	RetryOf    *int64     `json:"retryOf,omitempty,string"`
 }
 
 type Event struct {
@@ -41,12 +45,12 @@ func NewStore(db *pgxpool.Pool) *Store {
 	return &Store{db: db}
 }
 
-const runColumns = "id, release_id, input, status, step, state, lease_epoch, lease_until"
+const runColumns = "id, release_id, input, status, step, state, lease_epoch, lease_until, retry_of"
 
 func scanRun(row pgx.Row) (Run, error) {
 	var run Run
 	err := row.Scan(&run.ID, &run.Release, &run.Input, &run.Status, &run.Step, &run.State,
-		&run.LeaseEpoch, &run.LeaseUntil)
+		&run.LeaseEpoch, &run.LeaseUntil, &run.RetryOf)
 	return run, err
 }
 
@@ -75,12 +79,54 @@ func (s *Store) Create(ctx context.Context, key, release, input string) (Run, bo
 	if err != nil {
 		return Run{}, false, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO agent_events (run_id, seq, kind, data)
-		VALUES ($1, 1, 'run_created', jsonb_build_object('release', $2::text))`, run.ID, run.Release); err != nil {
+	if err := commitNewRun(ctx, tx, run); err != nil {
 		return Run{}, false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	return run, true, nil
+}
+
+// commitNewRun 让新任务与首条事件同事务可见。重试任务的首条事件同时记录来源。
+func commitNewRun(ctx context.Context, tx pgx.Tx, run Run) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO agent_events (run_id, seq, kind, data)
+		VALUES ($1, 1, 'run_created', jsonb_strip_nulls(jsonb_build_object('release', $2::text, 'retryOf', $3::bigint::text)))`,
+		run.ID, run.Release, run.RetryOf); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// Retry 创建新任务和空检查点，继承原问题及原版本。重发请求只返回已创建的直接重试。
+func (s *Store) Retry(ctx context.Context, id int64, releases map[string]bool) (Run, bool, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return Run{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	var status, release string
+	if err := tx.QueryRow(ctx, "SELECT status, release_id FROM agent_runs WHERE id=$1", id).Scan(&status, &release); err != nil {
+		return Run{}, false, err
+	}
+	if status != Failed && status != Cancelled {
+		return Run{}, false, ErrRunNotRetryable
+	}
+
+	// 仅创建 worker 能识别的版本。保留前缀避免与用户幂等键冲突。
+	available := releases[release]
+	run, err := scanRun(tx.QueryRow(ctx, `INSERT INTO agent_runs (idempotency_key, release_id, input, retry_of)
+		SELECT 'retry:' || id::text, release_id, input, id FROM agent_runs WHERE id=$1 AND $2::boolean
+		ON CONFLICT DO NOTHING RETURNING `+runColumns, id, available))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// 并发时读胜出的任务。版本下线后，已产生的重试也仍可读取。
+		run, err = scanRun(tx.QueryRow(ctx, "SELECT "+runColumns+" FROM agent_runs WHERE retry_of=$1", id))
+		if errors.Is(err, pgx.ErrNoRows) && !available {
+			return Run{}, false, ErrRetryReleaseUnavailable
+		}
+		return run, false, err
+	}
+	if err != nil {
+		return Run{}, false, err
+	}
+	if err := commitNewRun(ctx, tx, run); err != nil {
 		return Run{}, false, err
 	}
 	return run, true, nil
@@ -88,6 +134,38 @@ func (s *Store) Create(ctx context.Context, key, release, input string) (Run, bo
 
 func (s *Store) Run(ctx context.Context, id int64) (Run, error) {
 	return scanRun(s.db.QueryRow(ctx, "SELECT "+runColumns+" FROM agent_runs WHERE id=$1", id))
+}
+
+// Cancel 提交一个终态事件。与 worker 竞争时，行锁决定谁先更新，另一方会按新状态重判条件。
+func (s *Store) Cancel(ctx context.Context, id int64) (Run, error) {
+	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return Run{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// 清除待调用工具和租约，保留此前已提交的证据。
+	run, err := scanRun(tx.QueryRow(ctx, `UPDATE agent_runs
+		SET status='cancelled', step=step+1, lease_until=NULL, state=state-'pending'
+		WHERE id=$1 AND status IN ('queued', 'running') RETURNING `+runColumns, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		run, err = scanRun(tx.QueryRow(ctx, "SELECT "+runColumns+" FROM agent_runs WHERE id=$1", id))
+		if err == nil && run.Status != Cancelled {
+			return Run{}, ErrRunFinished
+		}
+		return run, err
+	}
+	if err != nil {
+		return Run{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO agent_events (run_id, seq, kind, data)
+		VALUES ($1, $2, 'run_cancelled', '{"reason":"user_requested"}')`, run.ID, run.Step+1); err != nil {
+		return Run{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Run{}, err
+	}
+	return run, nil
 }
 
 func (s *Store) Events(ctx context.Context, id int64, after int) ([]Event, error) {

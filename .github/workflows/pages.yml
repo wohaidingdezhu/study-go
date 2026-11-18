@@ -21,6 +21,12 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: labs/stack/go.mod
+          cache-dependency-path: labs/stack/go.sum
+      - run: go test ./...
+        working-directory: labs/stack
       - run: npm --prefix web ci
       - run: npm --prefix web run build:pages
       - uses: actions/upload-pages-artifact@v3

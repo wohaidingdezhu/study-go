@@ -8,6 +8,8 @@ const output = pages ? 'dist-pages' : 'dist';
 // 公网页面用带内容哈希的资源名，浏览器不会在新 HTML 载入后复用旧代码。
 if (pages) await rm(output, { recursive: true, force: true });
 const revision = /^[a-f0-9]{40}$/.test(process.env.GITHUB_SHA ?? '') ? process.env.GITHUB_SHA : 'local';
+// 发布时用 Go 测试样本生成回放，避免网页与执行器使用两份手工维护的轨迹。
+const replay = pages ? execFileSync('go', ['run', './cmd/agent-runtime', 'replay'], { cwd: '../labs/stack', encoding: 'utf8' }) : 'null';
 
 const result = await build({
   entryPoints: ['src/main.jsx'],
@@ -16,7 +18,7 @@ const result = await build({
   outdir: `${output}/assets`,
   entryNames: pages ? 'app-[hash]' : 'app',
   metafile: true,
-  define: { 'process.env.NODE_ENV': '"production"', __PAGES__: String(pages) },
+  define: { 'process.env.NODE_ENV': '"production"', __PAGES__: String(pages), __AGENT_REPLAY__: JSON.stringify(JSON.parse(replay)) },
   jsx: 'automatic',
 });
 if (!pages) {
@@ -36,7 +38,11 @@ if (!pages) {
   for (const path of new Set(paths.split('\0'))) {
     if (!types.has(extname(path)) || path.split('/').some((part) => part.startsWith('.'))) continue;
     const source = join('..', path);
-    if (!(await lstat(source)).isFile()) continue;
+    // 改名尚未提交时，Git 索引可能仍列出旧路径。保留其他读文件错误。
+    const entry = await lstat(source).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+    if (!entry?.isFile()) continue;
     const destination = join(output, 'materials', path);
     await mkdir(dirname(destination), { recursive: true });
     await copyFile(source, destination);

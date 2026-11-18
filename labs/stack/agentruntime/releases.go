@@ -9,8 +9,8 @@ import (
 
 const BaselineRelease = "ops-runbook-v1"
 
-//go:embed releases.sql
-var releaseSchema string
+//go:embed runtime_schema.sql
+var runtimeSchema string
 
 // Catalog 保留旧版本的定义，运行中的任务可以按已保存的版本继续执行。
 func Catalog() []Engine {
@@ -26,8 +26,8 @@ func Catalog() []Engine {
 	return []Engine{baseline, candidate, regression}
 }
 
-// InitReleases 可为已有数据库补控制面表。事务级锁避免 API 与 worker 并发建表。
-func (s *Store) InitReleases(ctx context.Context) error {
+// Init 为新旧数据库应用增量变更。事务级锁避免 API 与 worker 并发修改表结构。
+func (s *Store) Init(ctx context.Context) error {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -36,7 +36,7 @@ func (s *Store) InitReleases(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(2841601)`); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, releaseSchema); err != nil {
+	if _, err := tx.Exec(ctx, runtimeSchema); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO agent_active_release (singleton, release_id)

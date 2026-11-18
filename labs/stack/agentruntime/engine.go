@@ -12,6 +12,7 @@ const (
 	Running   = "running"
 	Succeeded = "succeeded"
 	Failed    = "failed"
+	Cancelled = "cancelled"
 )
 
 type Release struct {

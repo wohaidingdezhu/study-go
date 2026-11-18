@@ -17,12 +17,21 @@ const stages = [
 const guideURL = (path, anchor = '') => `#/guide/${encodeURIComponent(path)}${anchor ? `?at=${encodeURIComponent(anchor)}` : ''}`;
 const post = (data) => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
 
-async function request(path, options) {
+async function request(path, options, read = (_response, body) => body) {
   if (__PAGES__) return (await import('./pages.js')).pagesRequest(path, options);
   const res = await fetch(path, options);
   const body = await res.json().catch(() => null);
   if (!res.ok || body === null) throw new Error(body?.error || `请求失败（${res.status}），请重试。`);
-  return body;
+  return read(res, body);
+}
+
+function requestRunID(path, options) {
+  return request(path, options, (response) => {
+    // Location 保留十进制任务 ID，避免经由 JavaScript Number 丢失精度。
+    const route = response.headers.get('Location')?.match(/^\/runs\/([1-9][0-9]*)$/);
+    if (!route) throw new Error('服务没有返回有效的任务地址。');
+    return route[1];
+  });
 }
 
 function currentRoute() {
@@ -214,12 +223,49 @@ function ReviewCard({ card, refresh, onGraded }) {
   </section>;
 }
 
-const statusLabels = { queued: '排队中', running: '执行中', succeeded: '已完成', failed: '失败' };
-const eventLabels = { run_created: '任务已创建', tool_requested: '请求工具', tool_completed: '工具已返回', run_completed: '任务已完成', run_failed: '任务失败', tool_denied: '工具被拒绝' };
+const statusLabels = { queued: '排队中', running: '执行中', succeeded: '已完成', failed: '失败', cancelled: '已取消' };
+const eventLabels = { run_created: '任务已创建', tool_requested: '请求工具', tool_completed: '工具已返回', run_completed: '任务已完成', run_failed: '任务失败', tool_denied: '工具被拒绝', run_cancelled: '任务已取消' };
+const runDateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 function HostedAgent() {
-  return <><div className="page-head"><div><h1>Agent 实验</h1><p>用本机 Go 服务演练任务恢复、版本切换和执行追踪。</p></div></div>
-    <section className="panel agent-form"><h2>启动实验</h2><p>克隆仓库后在项目根目录启动 Docker 实验和本机 React 工作台。</p>
+  const report = __AGENT_REPLAY__;
+  const [scenarioID, setScenario] = useState(report.scenarios[0].id);
+  const [release, setRelease] = useState(report.evaluations[0].release);
+  const [step, setStep] = useState(0);
+  const scenario = report.scenarios.find(({ id }) => id === scenarioID);
+  const run = scenario.runs.find((candidate) => candidate.release === release);
+  const evaluation = report.evaluations.find((candidate) => candidate.release === release);
+  const event = run.events[step];
+  return <><div className="page-head"><div><h1>Agent 执行回放</h1><p>对同一个问题比较版本，逐步核对工具请求、证据和发布评估。</p></div></div>
+    <section className="panel replay"><div className="panel-head"><h2>对比执行版本</h2><span className="tag">构建时执行 · 固定样本</span></div>
+      <div className="replay-scenario"><div><label htmlFor="scenario">场景</label><select id="scenario" value={scenarioID} onChange={(e) => { setScenario(e.target.value); setStep(0); }}>
+        {report.scenarios.map(({ id, title }) => <option key={id} value={id}>{title}</option>)}
+      </select></div><p>{scenario.input}</p></div>
+      <div className="replay-versions" role="group" aria-label="执行版本">{scenario.runs.map((candidate) => {
+        const passed = report.evaluations.find((result) => result.release === candidate.release).passed;
+        return <button className="replay-version" key={candidate.release} aria-pressed={release === candidate.release}
+          onClick={() => { setRelease(candidate.release); setStep(0); }}>
+          <strong>{candidate.release}</strong><span>{candidate.answer ? `引用 ${candidate.answer.citations.length} 条` : '运行被拒绝'} · {passed ? '门禁通过' : '门禁失败'}</span>
+        </button>;
+      })}</div>
+    </section>
+    <div className="detail-grid replay-details">
+      <section className="panel"><div className="panel-head"><h2>执行步骤</h2><span className="tag" role="status">{step + 1} / {run.events.length}</span></div>
+        <div className="answer"><h3>{eventLabels[event.kind] ?? event.kind}</h3>
+          {event.kind === 'tool_requested' && <p>执行器请求 <code>{event.data.name}</code>，查询内容是「{event.data.query}」。</p>}
+          {event.kind === 'tool_denied' && <p>该版本的白名单未授权 <code>{event.data.call.name}</code>，步骤在执行工具前被拦截。</p>}
+          {event.kind === 'tool_completed' && <>{event.data.evidence.length === 0 ? <p>手册中没有匹配证据。</p> : <ul>{event.data.evidence.map((item) => <li key={item.id}><code>{item.id}</code><p>{item.text}</p></li>)}</ul>}</>}
+          {event.kind === 'run_completed' && <p>{event.data.text}</p>}
+        </div>
+        <details key={`${scenarioID}-${release}-${step}`}><summary>查看原始事件</summary><pre>{JSON.stringify(event, null, 2)}</pre></details>
+        <div className="actions"><button className="btn" disabled={step === 0} onClick={() => setStep(step - 1)}>上一步</button><button className="btn primary" disabled={step + 1 === run.events.length} onClick={() => setStep(step + 1)}>下一步</button></div>
+      </section>
+      <section className="panel"><div className="panel-head"><h2>发布评估</h2><span className={`tag ${evaluation.passed ? '' : 'tag-failed'}`}>{evaluation.passed ? '通过' : '拒绝发布'}</span></div>
+        <p>固定样本集 <code>{evaluation.dataset}</code></p>
+        <ul className="evaluation-list">{evaluation.cases.map((item) => <li key={item.name}><code>{item.name}</code><span>{item.passed ? '通过' : '失败'}</span></li>)}</ul>
+      </section>
+    </div>
+    <section className="panel replay-local"><h2>运行本机实验</h2><p>要提交自己的问题或验证 PostgreSQL 检查点、崩溃恢复和版本回滚，从项目根目录启动服务。</p>
       <pre>{'docker compose -f labs/agent-runtime/compose.yaml up --build --wait\nnpm --prefix web ci\nnpm --prefix web run build\nnpm --prefix web start'}</pre>
       <div className="actions"><a className="btn primary" href={guideURL('labs/agent-runtime/README.md')}>查看实验说明</a><a className="btn" href="http://127.0.0.1:4173/#/agent">打开本机实验 →</a></div>
     </section></>;
@@ -230,6 +276,7 @@ function Agent({ id }) {
   const [question, setQuestion] = useState('RabbitMQ 通知积压，怎样看 outbox？');
   const [release, setRelease] = useState('');
   const [lookup, setLookup] = useState(id || '');
+  const [historyStatus, setHistoryStatus] = useState('');
   const [error, setError] = useState('');
   const [connectError, setConnectError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -252,9 +299,9 @@ function Agent({ id }) {
     if (pending.current?.body !== options.body) pending.current = { body: options.body, key: crypto.randomUUID() };
     options.headers['Idempotency-Key'] = pending.current.key;
     try {
-      const run = await request('/api/agent/runs', options);
+      const id = await requestRunID('/api/agent/runs', options);
       pending.current = null;
-      location.hash = `/agent/${run.id}`;
+      location.hash = `/agent/${id}`;
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
   }
@@ -268,8 +315,63 @@ function Agent({ id }) {
       </select></div><button className="btn primary" disabled={busy || !question.trim()}>{busy ? '提交中…' : '运行 Agent'} <span aria-hidden="true">→</span></button></div><Notice message={error} />
     </form>
     <form className="panel lookup" onSubmit={(event) => { event.preventDefault(); location.hash = `/agent/${lookup.trim()}`; }}><label htmlFor="lookup">查询已有任务</label><input id="lookup" value={lookup} onChange={(event) => setLookup(event.target.value)} placeholder="任务 ID" inputMode="numeric" pattern="[1-9][0-9]*" required /><button className="btn">查看任务</button></form>
-    {id && <RunTrace key={id} id={id} />}
+    {id ? <><a className="back" href="#/agent">← 返回任务历史</a><RunTrace key={id} id={id} /></> :
+      <RunHistory status={historyStatus} onStatusChange={setHistoryStatus} />}
   </>;
+}
+
+function RunHistory({ status, onStatusChange }) {
+  const [query, setQuery] = useState({ before: '' });
+  const [page, setPage] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const params = new URLSearchParams({ limit: '6' });
+    if (status) params.set('status', status);
+    if (query.before) params.set('before', query.before);
+    setLoading(true);
+    setError('');
+    // 更换筛选或离开页面时丢弃旧请求，避免把两个筛选条件的结果混在一起。
+    request(`/api/agent/runs?${params}`, { signal: controller.signal })
+      .then((next) => {
+        if (controller.signal.aborted) return;
+        setPage((previous) => ({
+          items: query.before && previous ? [...previous.items, ...next.items] : next.items,
+          nextCursor: next.nextCursor,
+        }));
+      })
+      .catch((err) => { if (!controller.signal.aborted) setError(err.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [query, status]);
+
+  function refresh() {
+    setPage(null);
+    setQuery({ before: '' });
+  }
+
+  return <section className="panel trace run-history" aria-labelledby="run-history-title">
+    <div className="panel-head"><h2 id="run-history-title">任务历史</h2><button className="btn" onClick={refresh} disabled={loading}>刷新</button></div>
+    <div className="history-filter"><label htmlFor="history-status">按状态筛选</label>
+      <select id="history-status" value={status} onChange={(event) => { onStatusChange(event.target.value); refresh(); }}>
+        <option value="">全部状态</option>
+        {Object.entries(statusLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+    </div>
+    <Notice message={error} />
+    {page?.items.length === 0 && !loading && !error && <p className="history-note">没有符合条件的任务。</p>}
+    {page?.items.length > 0 && <ul className="history-list">{page.items.map((run) => <li key={run.id}>
+      <a className="history-row" href={`#/agent/${run.id}`}>
+        <div><strong>{run.input}</strong><small>#{run.id} · {run.release} · <time dateTime={run.createdAt}>{runDateFormat.format(new Date(run.createdAt))}</time>{run.retryOf && ` · 重试自 #${run.retryOf}`}</small></div>
+        <span className={`tag ${run.status === 'failed' ? 'tag-failed' : ''}`}>{statusLabels[run.status] ?? run.status}</span>
+      </a>
+    </li>)}</ul>}
+    {loading && <p className="history-note" role="status">正在读取任务历史…</p>}
+    {error ? <button className="btn" onClick={() => setQuery({ ...query })}>重试</button> : page?.nextCursor &&
+      <button className="btn" onClick={() => setQuery({ before: page.nextCursor })} disabled={loading}>加载更早的任务</button>}
+  </section>;
 }
 
 function RunTrace({ id }) {
@@ -277,6 +379,8 @@ function RunTrace({ id }) {
   const [events, setEvents] = useState([]);
   const [error, setError] = useState('');
   const [retry, setRetry] = useState(0);
+  const [actionPending, setActionPending] = useState(false);
+  const [actionError, setActionError] = useState('');
   useEffect(() => {
     if (!/^[1-9][0-9]*$/.test(id)) { setError('请输入有效的任务 ID。'); return; }
     const controller = new AbortController();
@@ -301,10 +405,51 @@ function RunTrace({ id }) {
     return () => { controller.abort(); clearTimeout(timer); };
   }, [id, retry]);
 
-  return <section className="panel trace"><div className="panel-head"><h2>任务 #{id}</h2>{run && <span className="tag">{statusLabels[run.status] ?? run.status}</span>}</div>
+  async function cancelRun() {
+    setActionPending(true);
+    setActionError('');
+    try {
+      await request(`/api/agent/runs/${id}/cancel`, { method: 'POST' });
+      // 重新按顺序读状态和事件，让界面展示数据库确认的终态。
+      setRetry((attempt) => attempt + 1);
+    } catch (err) {
+      if (err.message === 'run_already_finished') {
+        setActionError('任务刚刚结束，已读取最终状态。');
+        setRetry((attempt) => attempt + 1);
+      } else {
+        setActionError(err.message);
+      }
+    } finally {
+      setActionPending(false);
+    }
+  }
+
+  async function retryRun() {
+    setActionPending(true);
+    setActionError('');
+    const source = location.hash;
+    try {
+      const nextID = await requestRunID(`/api/agent/runs/${id}/retry`, { method: 'POST' });
+      if (location.hash === source) location.hash = `/agent/${nextID}`;
+    } catch (err) {
+      setActionError(err.message === 'retry_release_unavailable' ? '原任务的版本已不可用，无法创建重试。' : err.message);
+    } finally {
+      setActionPending(false);
+    }
+  }
+
+  const canCancel = run?.status === 'queued' || run?.status === 'running';
+  const canRetry = run?.status === 'failed' || run?.status === 'cancelled';
+  return <section className="panel trace"><div className="panel-head"><h2>任务 #{id}</h2>{run && <div className="trace-actions">
+    <span className="tag" role="status">{statusLabels[run.status] ?? run.status}</span>
+    {canCancel && <button className="btn" disabled={actionPending} onClick={cancelRun}>{actionPending ? '取消中…' : '取消任务'}</button>}
+    {canRetry && <button className="btn" disabled={actionPending} onClick={retryRun}>{actionPending ? '正在重试…' : '重试任务'}</button>}
+  </div>}</div>
+    <Notice message={actionError} />
     <Notice message={error} />{error && <button className="btn" onClick={() => setRetry(retry + 1)}>重新读取</button>}
     {!run && !error && <p role="status">正在读取任务事件…</p>}
     {run && <><p className="run-line">{run.input} <code>{run.release}</code></p>
+      {run.retryOf && <p><a className="subtle-link" href={`#/agent/${run.retryOf}`}>重试自任务 #{run.retryOf} ↗</a></p>}
       {run.state.answer && <div className="answer"><h3>排查结果</h3><p>{run.state.answer.text}</p>{run.state.answer.citations.map((citation) => <span className="tag" key={citation}>{citation}</span>)}</div>}
       {run.state.error && <Notice message={`执行失败（${run.state.error}）`} />}
       <ol className="events">{events.map((event) => <li key={event.seq}><details><summary><span className="event-seq">{event.seq}</span>{eventLabels[event.kind] ?? event.kind}<code>{event.kind}</code></summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details></li>)}</ol>

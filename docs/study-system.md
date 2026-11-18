@@ -4,7 +4,7 @@
 
 ## React 工作台
 
-在线版部署在 [GitHub Pages](https://wohaidingdezhu.github.io/study-go/)。练习记录和复习日期保存在当前浏览器。运行 Agent 和使用命令行共享的 SQLite 进度时，请使用本机模式。
+静态工作台将练习记录和复习日期保存在当前浏览器。「Agent 实验」里的构建回放可逐步比较不同版本的工具请求、检索结果和门禁判断。实时提交 Agent 任务和共享命令行 SQLite 进度使用本机模式。 [GitHub Pages](https://wohaidingdezhu.github.io/study-go/) · [构建回放说明](../labs/agent-runtime/README.md#逐步查看构建回放)
 
 从项目根目录运行，需要 Node.js 18+、npm 和 Python 3.9+。首次下载依赖后，页面可以在本机离线运行，打开 [学习工作台](http://127.0.0.1:4173)。
 
@@ -17,7 +17,7 @@ npm --prefix web start
 - **今日学习**展示下一项练习和到期卡片。项目路线按阶段展示练习，材料和代码能在网页中打开。
 - **练习记录**与命令行共用 `.study/progress.sqlite3`。浏览器保存后，`python3 scripts/study.py today` 能看到同一份进度。
 - **间隔复习**先显示题目，点「揭晓要点」后再自行评分。评分和下一次复习日期一起保存。
-- **Agent 实验**连接本机 `18084` 的 Go 服务。可以切换试跑版本、查看已知任务 ID，并展开工具调用的证据。启用方式见 [Agent 启动说明](../labs/agent-runtime/README.md#运行和查看)。
+- **Agent 实验**连接本机 `18084` 的 Go 服务。可以切换试跑版本、取消和重试任务，从历史里筛选、翻页并查看工具证据。启用方式见 [Agent 启动说明](../labs/agent-runtime/README.md#运行和查看)。
 
 改 React 源码后重新运行构建并刷新浏览器。若端口冲突，改用 `npm --prefix web start -- --port 4174`，页面地址也随之改为 4174。若 Agent 连接失败，可以先查看容器状态，再从页面重试连接。日常的任务和复习在网页服务启动后即可使用。
 

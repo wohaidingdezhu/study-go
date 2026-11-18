@@ -19,7 +19,10 @@ ASSETS = {
     "/assets/app.css": ("assets/app.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("assets/app.js", "text/javascript; charset=utf-8"),
 }
-AGENT_PATH = re.compile(r"/(releases|readyz|runs(?:/[1-9][0-9]*(?:/events)?)?)\Z")
+AGENT_PATHS = {
+    "GET": re.compile(r"/(?:releases|readyz|runs(?:/[1-9][0-9]*(?:/events)?)?)\Z"),
+    "POST": re.compile(r"/runs(?:/[1-9][0-9]*/(?:cancel|retry))?\Z"),
+}
 GUIDE_DIRS = {"docs", "exercises", "go", "java", "labs", "scripts"}
 GUIDE_TYPES = {".md", ".go", ".java", ".py", ".sh", ".sql", ".yaml", ".xml"}
 
@@ -145,9 +148,10 @@ class StudyHandler(BaseHTTPRequestHandler):
         return {"path": relative.as_posix(), "type": path.suffix, "text": path.read_text(encoding="utf-8")}
 
     def proxy_agent(self, path, query):
-        if not AGENT_PATH.fullmatch(path) or (self.command == "POST" and path != "/runs") or (self.command == "GET" and path == "/runs"):
+        if not AGENT_PATHS[self.command].fullmatch(path):
             raise RequestError(404, "没有找到这个 Agent 接口。")
-        data = self.read_body() if self.command == "POST" else None
+        # 创建任务需要请求体。取消和重试只需要路径里的任务 ID，可发送空 POST。
+        data = self.read_body() if self.command == "POST" and path == "/runs" else None
         headers = {"Content-Type": "application/json", "Idempotency-Key": self.headers.get("Idempotency-Key", "")}
         # 同源代理只调用本机的实验服务。Agent 停机时学习功能仍独立运行。
         with closing(http.client.HTTPConnection("127.0.0.1", self.server.agent_port, timeout=5)) as agent:
@@ -157,17 +161,20 @@ class StudyHandler(BaseHTTPRequestHandler):
                 content = response.read()
             except (OSError, http.client.HTTPException) as error:
                 raise RequestError(503, "Agent 服务暂不可用。启动实验容器后再重试。") from error
-        self.send_body(response.status, response.getheader("Content-Type", "application/json"), content)
+        self.send_body(response.status, response.getheader("Content-Type", "application/json"), content,
+                       location=response.getheader("Location"))
 
     def send_json(self, payload, status=200):
         self.send_body(status, "application/json; charset=utf-8", json.dumps(payload, ensure_ascii=False).encode())
 
-    def send_body(self, status, content_type, content):
+    def send_body(self, status, content_type, content, *, location=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        if location:
+            self.send_header("Location", location)
         self.end_headers()
         self.wfile.write(content)
 

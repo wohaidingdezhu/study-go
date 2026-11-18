@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -49,6 +50,19 @@ func Server(addr string, store *Store, releases []Release) *http.Server {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
+		query, ok := parseHistoryQuery(r.URL.RawQuery)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid_history_query")
+			return
+		}
+		page, err := store.listRuns(r.Context(), query)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, page)
+	})
 	mux.HandleFunc("POST /runs", func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("Idempotency-Key")
 		if !keyPattern.MatchString(key) {
@@ -81,13 +95,7 @@ func Server(addr string, store *Store, releases []Release) *http.Server {
 			writeStoreError(w, err)
 			return
 		}
-		status := http.StatusOK
-		// 首次创建只代表已接收任务，调用方再按 Location 查询异步执行结果。
-		if created {
-			status = http.StatusAccepted
-		}
-		w.Header().Set("Location", "/runs/"+strconv.FormatInt(run.ID, 10))
-		writeJSON(w, status, run)
+		writeAcceptedRun(w, run, created)
 	})
 	mux.HandleFunc("GET /runs/{id}", func(w http.ResponseWriter, r *http.Request) {
 		run, ok := readRun(w, r, store)
@@ -95,16 +103,49 @@ func Server(addr string, store *Store, releases []Release) *http.Server {
 			writeJSON(w, http.StatusOK, run)
 		}
 	})
+	mux.HandleFunc("POST /runs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := readRunID(w, r)
+		if !ok {
+			return
+		}
+		run, err := store.Cancel(r.Context(), id)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, run)
+	})
+	mux.HandleFunc("POST /runs/{id}/retry", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := readRunID(w, r)
+		if !ok {
+			return
+		}
+		run, created, err := store.Retry(r.Context(), id, known)
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		writeAcceptedRun(w, run, created)
+	})
 	mux.HandleFunc("GET /runs/{id}/events", func(w http.ResponseWriter, r *http.Request) {
 		// after 表示客户端已经读到的最后一个事件序号，后续轮询只取更新的事件。
 		after := 0
-		if r.URL.Query().Has("after") {
-			var err error
-			after, err = strconv.Atoi(r.URL.Query().Get("after"))
-			if err != nil || after < 0 || after > 2147483647 {
+		params, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cursor")
+			return
+		}
+		if values, present := params["after"]; present {
+			if len(values) != 1 {
 				writeError(w, http.StatusBadRequest, "invalid_cursor")
 				return
 			}
+			cursor, err := strconv.ParseUint(values[0], 10, 31)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_cursor")
+				return
+			}
+			after = int(cursor)
 		}
 		run, ok := readRun(w, r, store)
 		if !ok {
@@ -125,10 +166,28 @@ func Server(addr string, store *Store, releases []Release) *http.Server {
 	}
 }
 
-func readRun(w http.ResponseWriter, r *http.Request, store *Store) (Run, bool) {
+func writeAcceptedRun(w http.ResponseWriter, run Run, created bool) {
+	status := http.StatusOK
+	// 首次创建只代表已接收任务，调用方再按 Location 查询异步执行结果。
+	if created {
+		status = http.StatusAccepted
+	}
+	w.Header().Set("Location", "/runs/"+strconv.FormatInt(run.ID, 10))
+	writeJSON(w, status, run)
+}
+
+func readRunID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || id < 1 {
 		writeError(w, http.StatusBadRequest, "invalid_run_id")
+		return 0, false
+	}
+	return id, true
+}
+
+func readRun(w http.ResponseWriter, r *http.Request, store *Store) (Run, bool) {
+	id, ok := readRunID(w, r)
+	if !ok {
 		return Run{}, false
 	}
 	run, err := store.Run(r.Context(), id)
@@ -146,6 +205,12 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "run_not_found")
 	case errors.Is(err, ErrKeyConflict):
 		writeError(w, http.StatusConflict, "idempotency_conflict")
+	case errors.Is(err, ErrRunFinished):
+		writeError(w, http.StatusConflict, "run_already_finished")
+	case errors.Is(err, ErrRunNotRetryable):
+		writeError(w, http.StatusConflict, "run_not_retryable")
+	case errors.Is(err, ErrRetryReleaseUnavailable):
+		writeError(w, http.StatusConflict, "retry_release_unavailable")
 	default:
 		log.Printf("agent store: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal_error")

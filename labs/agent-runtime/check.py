@@ -1,9 +1,11 @@
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import subprocess
 import time
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
@@ -46,10 +48,10 @@ class Verification:
     def compose(self, *args, **options):
         return docker("compose", "-p", self.project, "-f", str(COMPOSE_FILE), *args, **options)
 
-    def request(self, path, expected=200, *, body=None, key=None):
+    def request(self, path, expected=200, *, body=None, key=None, method=None):
         headers = {"Content-Type": "application/json", "Idempotency-Key": key} if key else {}
         payload = json.dumps(body).encode() if body is not None else None
-        request = Request(self.api + path, data=payload, headers=headers)
+        request = Request(self.api + path, data=payload, headers=headers, method=method)
         try:
             response = urlopen(request, timeout=4)
         except HTTPError as error:
@@ -120,6 +122,147 @@ class Verification:
         require(changes.splitlines() == expected, f"发布审计异常：{changes}")
         print("通过：拒绝回归候选、发布与回滚、固定任务版本、跨版本重试和审计", flush=True)
 
+    def cancelled(self, path, expected_events):
+        run, _ = self.request(path)
+        events, _ = self.request(path + "/events")
+        require(run["status"] == "cancelled" and "leaseUntil" not in run, f"取消状态或租约异常：{run}")
+        require("pending" not in run["state"] and "answer" not in run["state"], f"取消后任务状态异常：{run}")
+        require([event["kind"] for event in events] == expected_events, f"取消事件异常：{events}")
+        require([event["seq"] for event in events] == list(range(1, len(events) + 1)), f"取消事件序号异常：{events}")
+        require(events[-1]["data"] == {"reason": "user_requested"}, f"取消原因异常：{events}")
+        return run
+
+    def check_cancellation(self):
+        self.compose("stop", "worker")
+        question = "Redis 缓存下线怎么办？"
+        _, queued_path = self.submit("cancel-queued", question)
+
+        # 两个客户端同时取消同一条排队任务，应该只写一条取消事件。
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(self.request, queued_path + "/cancel", method="POST")
+            second = pool.submit(self.request, queued_path + "/cancel", method="POST")
+            require(first.result() == second.result(), "并发取消返回了不同的终态")
+        queued = self.cancelled(queued_path, ["run_created", "run_cancelled"])
+        require(queued["leaseEpoch"] == 0, f"排队时取消的任务已经被领取：{queued}")
+        replay, _ = self.request("/runs", body={"input": question}, key="cancel-queued")
+        require(replay == queued, "重发创建请求意外重启了已取消的任务")
+
+        name = f"{self.project}-cancel"
+        self.slow_workers.append(name)
+        self.compose("run", "-d", "--no-deps", "--name", name, "-e", "AGENT_CHECKPOINT_DELAY=4s", "worker")
+        run_id, path = self.submit("cancel-running", question)
+        in_flight = self.wait_log(name, msg="step_computed", run_id=run_id, kind="tool_completed")
+        aborted, _ = self.request(path + "/cancel", method="POST")
+        # 等执行中的 worker 尝试写回已计算的结果，验证取消不会被旧租约覆盖。
+        rejection = self.wait_log(name, msg="checkpoint_rejected", run_id=run_id, epoch=in_flight["epoch"])
+        require(rejection["error"] == "worker lease is no longer valid", f"提交拒绝原因异常：{rejection}")
+        expected = ["run_created", "tool_requested", "run_cancelled"]
+        require(aborted == self.cancelled(path, expected), "取消结果被 worker 修改")
+        require(self.request(path + "/events?after=2")[0][0]["kind"] == "run_cancelled", "增量事件缺少取消记录")
+        docker("rm", name, "--force")
+        self.compose("start", "worker")
+        print("通过：排队时并发取消、运行中取消、迟到提交拒绝和幂等重试", flush=True)
+
+    def check_history(self):
+        self.compose("stop", "worker")
+        ids = []
+        for index in range(4):
+            run_id, path = self.submit(f"history-{index}", f"历史分页验收 {index}")
+            ids.append(str(run_id))
+            if index in (1, 3):
+                self.request(path + "/cancel", method="POST")
+
+        first, _ = self.request("/runs?limit=2")
+        require([row["id"] for row in first["items"]] == [ids[3], ids[2]], f"首屏排序异常：{first}")
+        require(first["nextCursor"] == ids[2], f"首屏游标异常：{first}")
+        created, _ = self.request(f"/runs/{ids[3]}/events")
+        require(first["items"][0]["createdAt"] == created[0]["createdAt"], "摘要中的创建时间与事件不符")
+        self.submit("history-new", "翻页过程中创建的新任务")
+
+        # 新任务插到列表前面，游标仍从上一页最后一个 ID 之后读取。
+        second, _ = self.request("/runs?" + urlencode({"limit": 2, "before": first["nextCursor"]}))
+        require([row["id"] for row in second["items"]] == [ids[1], ids[0]], f"分页有重复或遗漏：{second}")
+        filtered, _ = self.request("/runs?limit=1&status=cancelled")
+        require(filtered["nextCursor"] == ids[3], f"状态筛选第一条异常：{filtered}")
+        older, _ = self.request(f"/runs?limit=1&status=cancelled&before={filtered['nextCursor']}")
+        require(older["items"][0]["id"] == ids[1] and older["items"][0]["status"] == "cancelled", f"筛选翻页异常：{older}")
+        empty, _ = self.request("/runs?before=1")
+        require(empty == {"items": [], "nextCursor": None}, f"末尾空页异常：{empty}")
+
+        for query in ("limit=0", "limit=51", "limit=1&limit=2", "status=invalid", "before=-1", "before=%XX", "unknown=1"):
+            bad, _ = self.request(f"/runs?{query}", 400)
+            require(bad["error"] == "invalid_history_query", f"无效查询未正确处理：{bad}")
+        self.compose("start", "worker")
+        print("通过：历史倒序、游标翻页、状态筛选、并发新增和非法参数", flush=True)
+
+    def check_retries(self):
+        baseline, candidate = "ops-runbook-v1", "ops-runbook-v2"
+        self.compose("stop", "worker")
+        question = "Redis 下线后怎么办？"
+        source_id, source_path = self.submit("retry-source", question)
+        bad, _ = self.request(source_path + "/retry", 409, method="POST")
+        require(bad["error"] == "run_not_retryable", f"排队任务不应创建重试：{bad}")
+        self.request(source_path + "/cancel", method="POST")
+        source, _ = self.request(source_path)
+        source_events, _ = self.request(source_path + "/events")
+        retired_id, retired_path = self.submit("retry-retired-source", question)
+        self.request(retired_path + "/cancel", method="POST")
+        self.release_command("publish", baseline, candidate)
+
+        def retry():
+            request = Request(self.api + source_path + "/retry", method="POST")
+            with urlopen(request, timeout=4) as response:
+                return response.status, response.headers["Location"], json.load(response)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first, second = [pool.submit(retry) for _ in range(2)]
+            status, path, child = first.result()
+            other_status, other_path, other_child = second.result()
+        require(sorted([status, other_status]) == [200, 202] and path == other_path and child == other_child,
+                f"并发重试创建了不一致的结果：{child}, {other_child}")
+        require(child["id"] != source_id and child["retryOf"] == str(source_id) and child["state"] == {},
+                f"新任务应保留来源并从空检查点启动：{child}")
+        require(child["release"] == baseline and child["input"] == question, f"没有继承原问题和版本：{child}")
+        require(self.active_release() == candidate, "重试测试应在默认版本变化时执行")
+        require(self.request(source_path)[0] == source and self.request(source_path + "/events")[0] == source_events,
+                "重试修改了原任务或原事件")
+        self.request("/runs", 400, body={"input": question}, key=f"retry:{source_id}")
+
+        # 内置只读工具正常完成。用隔离数据库准备一次失败，验证 failed 的重试入口。
+        failed_id, failed_path = self.submit("retry-failed-source", question)
+        self.compose("exec", "-T", "postgres", "psql", "-U", "agent", "-d", "agent_runtime", "-v", "ON_ERROR_STOP=1", "-c", f"""
+            WITH marked AS (
+                UPDATE agent_runs SET status='failed', step=1, state='{{"error":"test_failure"}}'
+                WHERE id={failed_id} AND status='queued' RETURNING id
+            )
+            INSERT INTO agent_events (run_id, seq, kind, data)
+            SELECT id, 2, 'run_failed', '{{"code":"test_failure"}}' FROM marked
+        """)
+        second_child, second_path = self.request(failed_path + "/retry", 202, method="POST")
+        require(second_child["retryOf"] == str(failed_id) and second_child["release"] == candidate, f"失败后的重试异常：{second_child}")
+        self.release_command("publish", candidate, baseline)
+        self.compose("start", "worker")
+
+        finished, events = self.succeeded(path, "cache-fallback")
+        require(events[0]["data"] == {"release": baseline, "retryOf": str(source_id)}, f"首条事件缺少重试来源：{events[0]}")
+        latest, _ = self.succeeded(second_path, "cache-fallback")
+        history, _ = self.request("/runs?limit=10&status=succeeded")
+        parents = {row["id"]: row.get("retryOf") for row in history["items"]}
+        require(parents[str(latest["id"])] == str(failed_id) and parents[str(finished["id"])] == str(source_id),
+                f"历史摘要缺少重试来源：{history}")
+        require(self.request(source_path + "/retry", method="POST")[0] == finished, "重发没有返回已完成的原重试")
+        self.request(path + "/retry", 409, method="POST")
+        self.request("/runs/9223372036854775807/retry", 404, method="POST")
+
+        # 在隔离库模拟退役版本。已有重试可读取，新请求也不会生成无法领取的任务。
+        self.compose("exec", "-T", "postgres", "psql", "-U", "agent", "-d", "agent_runtime", "-v", "ON_ERROR_STOP=1", "-c",
+                     f"UPDATE agent_runs SET release_id='retired-release' WHERE id IN ({source_id}, {child['id']}, {retired_id})")
+        retained, _ = self.request(source_path + "/retry", method="POST")
+        require(retained["id"] == child["id"], "退役版本的既有重试记录丢失")
+        error, _ = self.request(retired_path + "/retry", 409, method="POST")
+        require(error["error"] == "retry_release_unavailable", f"退役版本应拒绝新重试：{error}")
+        print("通过：取消与失败重试、并发幂等、版本继承、退役版本保护和来源追溯", flush=True)
+
     def wait_log(self, name, **fields):
         def matching_log():
             for line in docker("logs", name).splitlines():
@@ -180,11 +323,21 @@ class Verification:
         require(conflict["error"] == "idempotency_conflict", f"幂等冲突异常：{conflict}")
         _, events = self.succeeded(path, "cache-fallback")
         require(self.request(path + "/events?after=2")[0] == events[2:], "事件游标返回异常")
+        for query in ("after=1&after=2", "after=%XX", "after=2147483648", "after=-1", "after="):
+            error, _ = self.request(path + "/events?" + query, 400)
+            require(error["error"] == "invalid_cursor", f"无效游标未正确处理：{error}")
+        finished, _ = self.request(path + "/cancel", 409, method="POST")
+        require(finished["error"] == "run_already_finished", f"已完成任务的取消响应异常：{finished}")
+        require(self.request(path + "/events")[0] == events, "取消请求修改了已完成任务")
+        self.request("/runs/9223372036854775807/cancel", 404, method="POST")
         print("通过：提交、幂等、证据引用和事件游标", flush=True)
 
+        self.check_cancellation()
         self.interrupted_run("kill")
         self.interrupted_run("pause")
         self.check_releases()
+        self.check_history()
+        self.check_retries()
 
     def clean(self):
         # 只清理带本次随机项目名的容器和卷，常驻演示数据留在独立项目里。

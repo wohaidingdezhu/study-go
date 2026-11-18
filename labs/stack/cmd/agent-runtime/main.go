@@ -23,7 +23,7 @@ func main() {
 	// 评估报告走 stdout，命令错误走 stderr，调用方可直接读取 JSON 报告。
 	cliErrors := log.New(os.Stderr, "", 0)
 	if len(os.Args) < 2 {
-		cliErrors.Fatal("usage: agent-runtime api | worker | eval [release] | publish <expected> <candidate>")
+		cliErrors.Fatal("usage: agent-runtime api | worker | eval [release] | replay | publish <expected> <candidate>")
 	}
 	// 本地 Ctrl+C 和容器的 SIGTERM 都会取消运行中的工作，逐步退出。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -34,6 +34,12 @@ func main() {
 }
 
 func run(ctx context.Context, mode string, args []string) error {
+	if mode == "replay" {
+		if len(args) != 0 {
+			return errors.New("usage: agent-runtime replay")
+		}
+		return json.NewEncoder(os.Stdout).Encode(agentruntime.BuildReplay(ctx))
+	}
 	engines := make(map[string]agentruntime.Engine)
 	reports := make(map[string]agentruntime.EvalReport)
 	var releases []agentruntime.Release
@@ -88,8 +94,8 @@ func run(ctx context.Context, mode string, args []string) error {
 	store := agentruntime.NewStore(db)
 	initCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := store.InitReleases(initCtx); err != nil {
-		return fmt.Errorf("initialize releases: %w", err)
+	if err := store.Init(initCtx); err != nil {
+		return fmt.Errorf("initialize runtime schema: %w", err)
 	}
 	if mode == "publish" {
 		return store.Publish(initCtx, args[0], reports[args[1]])

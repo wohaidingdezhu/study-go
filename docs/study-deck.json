@@ -193,10 +193,10 @@
   },
   {
     "id": "agent-runtime",
-    "title": "证明 Agent 任务能恢复且旧 worker 写不回去",
+    "title": "证明 Agent 任务能恢复、取消并阻止迟到写入",
     "guide": "labs/agent-runtime/README.md · 验收",
-    "practice": "先画领取、工具执行、状态提交的时间线，再运行 python3 labs/agent-runtime/check.py。一次杀掉 worker，一次暂停后恢复旧 worker。",
-    "evidence": "记录同一任务 ID、恢复前后的租约代次、事件序号和一次被拒绝的旧提交。",
+    "practice": "先画领取、工具执行、状态提交的时间线，再运行 python3 labs/agent-runtime/check.py。分别观察终止进程、恢复暂停进程和取消任务。",
+    "evidence": "记录恢复前后的租约代次、取消事件的序号和一次被拒绝的旧提交。",
     "cards": [
       {
         "id": "agent-lease-fencing",
@@ -209,6 +209,24 @@
         "question": "工具已返回但检查点未提交，接手后工具是否会再跑？如果工具改成扣款，要增加什么？",
         "answer": "会从旧检查点重新调用。对扣款需要让外部系统用稳定幂等键去重并可查询结果，单靠本地检查点不能保证外部副作用只发生一次。",
         "repair": "推演外部扣款成功、进程在记录结果前崩溃这一顺序，并标注幂等键从哪个持久化状态取得。"
+      },
+      {
+        "id": "agent-cancel-race",
+        "question": "用户点取消时 worker 已得到结果但还没写库。谁先提交分别会有什么结果？",
+        "answer": "取消先提交时，任务进入 cancelled，worker 更新要求的 running 状态不再成立，数据库只保留取消事件和已有证据。最终结果先提交时，取消返回 409。",
+        "repair": "在 check_cancellation 中找到触发取消的日志和被拒绝的提交日志，按时间顺序画出行锁和状态。"
+      },
+      {
+        "id": "agent-history-cursor",
+        "question": "只看已取消任务，第一页末尾的 ID 为 12，随后新建了 ID 为 20 的任务。第二页如何查询，为什么？",
+        "answer": "沿用 status=cancelled，并加 before=12，按 ID 严格倒序取 id < 12。服务多取一条判断是否还有下一页。较新的 20 在游标范围之外，刷新首页才能看到。",
+        "repair": "执行 AgentHistoryProbe，对照打印的 ID，再用 curl 给历史请求加 status=cancelled 验证约定。"
+      },
+      {
+        "id": "agent-retry-lineage",
+        "question": "任务在 v1 被取消，随后默认版本切到 v2。两个客户端同时重试，数据库应留下什么？",
+        "answer": "原任务保持已取消并保留事件。数据库按 retry_of 唯一约束创建一个子任务，两次请求得到同一新 ID。子任务从空检查点开始，使用原问题和 v1，并在首条事件记录来源。",
+        "repair": "用 check_retries 核对 202、200 和相同的 Location，再顺着 retryOf 查询原任务。"
       }
     ]
   },
