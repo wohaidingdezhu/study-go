@@ -40,3 +40,7 @@ CREATE INDEX IF NOT EXISTS agent_runs_history_status_id ON agent_runs (status, i
 
 -- 并发请求下，每个失败或已取消任务也最多有一个直接重试。
 CREATE UNIQUE INDEX IF NOT EXISTS agent_runs_one_retry ON agent_runs (retry_of) WHERE retry_of IS NOT NULL;
+
+-- 概览只读窗口内的终态事件，工具请求与中间步骤不进入这条索引。
+CREATE INDEX IF NOT EXISTS agent_events_terminal_at ON agent_events (created_at DESC)
+WHERE kind IN ('run_completed', 'run_failed', 'tool_denied', 'run_cancelled');

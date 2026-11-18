@@ -1,6 +1,8 @@
+import argparse
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 import subprocess
 import time
@@ -38,6 +40,12 @@ def until(description, probe, seconds=20):
             return value
         time.sleep(0.15)
     raise TimeoutError(f"超时：{description}")
+
+
+def database_time(value):
+    # Go 会省略小数末尾的零，Python 3.9 的 fromisoformat 不接受所有这些长度。
+    pattern = "%Y-%m-%dT%H:%M:%S.%f%z" if "." in value else "%Y-%m-%dT%H:%M:%S%z"
+    return datetime.strptime(value, pattern)
 
 
 class Verification:
@@ -89,6 +97,61 @@ class Verification:
         active = [release["id"] for release in releases if release["active"]]
         require(len(active) == 1, f"默认版本异常：{releases}")
         return active[0]
+
+    def check_overview(self):
+        empty, _ = self.request("/runtime/overview")
+        require(empty["queue"] == {"queued": 0, "running": 0, "expiredLeases": 0, "oldestQueuedAt": None},
+                f"空库队列统计异常：{empty}")
+        require(empty["recent"] == {"hours": 24, "succeeded": 0, "failed": 0, "cancelled": 0,
+                                    "durationSamples": 0, "p50Ms": None, "p95Ms": None}, f"空样本统计异常：{empty}")
+        self.compose("stop", "worker")
+        psql = ("exec", "-T", "postgres", "psql", "-U", "agent", "-d", "agent_runtime", "-v", "ON_ERROR_STOP=1", "-c")
+        # 使用数据库自己的时钟布置边界及固定耗时，避免把网络耗时混进分位数断言。
+        self.compose(*psql, """
+            WITH fixtures(label, status, age, lease, kind, duration) AS (VALUES
+                ('oldest', 'queued', interval '2 days', NULL::interval, NULL::text, interval '0'),
+                ('next', 'queued', interval '1 hour', NULL, NULL, interval '0'),
+                ('live', 'running', interval '2 hours', interval '1 hour', NULL, interval '0'),
+                ('expired', 'running', interval '2 hours', interval '-1 hour', NULL, interval '0'),
+                ('fast', 'succeeded', interval '1 hour', NULL, 'run_completed', interval '100 milliseconds'),
+                ('slow', 'succeeded', interval '1 hour', NULL, 'run_completed', interval '300 milliseconds'),
+                ('outside', 'succeeded', interval '25 hours', NULL, 'run_completed', interval '2 seconds'),
+                ('failed', 'failed', interval '1 hour', NULL, 'run_failed', interval '2 seconds'),
+                ('denied', 'failed', interval '1 hour', NULL, 'tool_denied', interval '1 second'),
+                ('cancelled', 'cancelled', interval '1 hour', NULL, 'run_cancelled', interval '1 second')
+            ), inserted AS (
+                INSERT INTO agent_runs (idempotency_key, release_id, input, status, step, lease_until)
+                SELECT 'overview-test-' || label, 'ops-runbook-v1', label, status,
+                       CASE WHEN kind IS NULL THEN 0 ELSE 1 END, statement_timestamp() + lease
+                FROM fixtures RETURNING id, input
+            )
+            INSERT INTO agent_events (run_id, seq, kind, data, created_at)
+            SELECT id, 1, 'run_created', '{}'::jsonb, statement_timestamp() - age
+                FROM inserted JOIN fixtures ON input=label
+            UNION ALL
+            SELECT id, 2, kind, '{}'::jsonb, statement_timestamp() - age + duration
+                FROM inserted JOIN fixtures ON input=label WHERE kind IS NOT NULL
+        """)
+        view, _ = self.request("/runtime/overview")
+        pending, _ = self.request("/runs?status=queued")
+        oldest = next(row["createdAt"] for row in pending["items"] if row["input"] == "oldest")
+        expected_queue = {"queued": 2, "running": 2, "expiredLeases": 1, "oldestQueuedAt": oldest}
+        require(view["queue"] == expected_queue, f"待领取或租约统计错误：{view}")
+        expected_recent = {"hours": 24, "succeeded": 2, "failed": 2, "cancelled": 1,
+                           "durationSamples": 2, "p50Ms": 200, "p95Ms": 290}
+        require(view["recent"] == expected_recent, f"24 小时终态或完成耗时统计错误：{view}")
+        before, after = (database_time(sample["asOf"]) for sample in (empty, view))
+        require(after >= before, f"统计时间异常：{view}")
+        self.compose(*psql, """
+            BEGIN;
+            DELETE FROM agent_events WHERE run_id IN (
+                SELECT id FROM agent_runs WHERE idempotency_key LIKE 'overview-test-%'
+            );
+            DELETE FROM agent_runs WHERE idempotency_key LIKE 'overview-test-%';
+            COMMIT;
+        """)
+        self.compose("start", "worker")
+        print("通过：空概览、过期租约、24 小时窗口、拒绝计入失败和分位数", flush=True)
 
     def check_releases(self):
         baseline, candidate, regression = "ops-runbook-v1", "ops-runbook-v2", "ops-runbook-regression"
@@ -304,8 +367,8 @@ class Verification:
         docker("rm", name, "--force")
         print(f"通过：{action}，任务 {run_id} 从租约代次 {in_flight['epoch']} 恢复到 {completed['leaseEpoch']}", flush=True)
 
-    def check(self):
-        self.compose("up", "--build", "--wait", "--wait-timeout", "60", timeout=240)
+    def check(self, reuse_image=False):
+        self.compose("up", "--no-build" if reuse_image else "--build", "--wait", "--wait-timeout", "60", timeout=240)
         address = self.compose("port", "api", "8084")
         require(address.startswith("127.0.0.1:") and not address.endswith(":0"), f"隔离端口异常：{address}")
         self.api = f"http://{address}"
@@ -314,6 +377,7 @@ class Verification:
         report = self.release_command("eval")
         require(report["passed"] and len(report["cases"]) == 4, f"发布评估失败：{report}")
         print("通过：发布评估的 4 个样本，越权工具未执行", flush=True)
+        self.check_overview()
 
         question = "Redis 缓存下线怎么办？"
         run_id, path = self.submit("normal", question)
@@ -348,8 +412,11 @@ class Verification:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="验收本机 Agent 运行时")
+    parser.add_argument("--reuse-image", action="store_true", help="使用已构建的 Agent 镜像")
+    args = parser.parse_args()
     verification = Verification()
     try:
-        verification.check()
+        verification.check(args.reuse_image)
     finally:
         verification.clean()

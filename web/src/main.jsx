@@ -308,6 +308,7 @@ function Agent({ id }) {
 
   return <><div className="page-head"><div><h1>Agent 实验</h1><p>提交订单故障，观察任务如何执行、检索并返回证据。</p></div><a className="subtle-link" href={guideURL('labs/agent-runtime/README.md')}>实验说明 ↗</a></div>
     {connectError && <div className="agent-offline"><Notice message={connectError} /><button className="btn" onClick={loadReleases}>重试连接</button></div>}
+    {!id && <RuntimeOverview />}
     <form className="panel agent-form" onSubmit={submit}><h2>提交排查任务</h2><label htmlFor="question">排查问题</label><textarea id="question" rows="3" value={question} onChange={(event) => setQuestion(event.target.value)} required />
       <div className="agent-controls"><div><label htmlFor="release">执行版本</label><select id="release" value={release} onChange={(event) => setRelease(event.target.value)}>
         <option value="">默认版本{releases.find((item) => item.active) ? ` · ${releases.find((item) => item.active).id}` : ''}</option>
@@ -318,6 +319,52 @@ function Agent({ id }) {
     {id ? <><a className="back" href="#/agent">← 返回任务历史</a><RunTrace key={id} id={id} /></> :
       <RunHistory status={historyStatus} onStatusChange={setHistoryStatus} />}
   </>;
+}
+
+const milliseconds = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 1 });
+
+function RuntimeOverview() {
+  const [view, setView] = useState(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError('');
+    // 只在概览可见时读取，刷新或离开页面时取消上一次请求。
+    request('/api/agent/runtime/overview', { signal: controller.signal })
+      .then((next) => { if (!controller.signal.aborted) setView(next); })
+      .catch((err) => { if (!controller.signal.aborted) setError(err.message); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [revision]);
+
+  return <section className="panel runtime-overview" aria-labelledby="runtime-overview-title">
+    <div className="panel-head"><h2 id="runtime-overview-title">运行概览</h2>
+      <button className="btn" disabled={loading} onClick={() => setRevision((value) => value + 1)}>刷新概览</button>
+    </div>
+    <Notice message={error} />
+    {loading && <p role="status">正在读取运行概览…</p>}
+    {view && <div className="runtime-grid">
+      <div><h3>当前任务</h3>
+        <dl className="runtime-stats"><div><dt>待领取</dt><dd>{view.queue.queued}</dd></div>
+          <div><dt>运行中</dt><dd>{view.queue.running}</dd></div>
+          <div><dt>租约过期</dt><dd className={view.queue.expiredLeases ? 'runtime-expired' : ''}>{view.queue.expiredLeases}</dd></div>
+        </dl>
+        {view.queue.oldestQueuedAt && <p>最早的待领取任务创建于 <time dateTime={view.queue.oldestQueuedAt}>{runDateFormat.format(new Date(view.queue.oldestQueuedAt))}</time></p>}
+      </div>
+      <div><h3>最近 {view.recent.hours} 小时</h3>
+        <dl className="runtime-stats"><div><dt>成功</dt><dd>{view.recent.succeeded}</dd></div>
+          <div><dt>失败</dt><dd>{view.recent.failed}</dd></div>
+          <div><dt>取消</dt><dd>{view.recent.cancelled}</dd></div>
+        </dl>
+        {view.recent.durationSamples > 0 ? <p>完成耗时 P50 <strong>{milliseconds.format(view.recent.p50Ms)} ms</strong> · P95 <strong>{milliseconds.format(view.recent.p95Ms)} ms</strong>（{view.recent.durationSamples} 条）</p> : <p>暂无成功任务耗时。</p>}
+      </div>
+      <p className="runtime-snapshot">更新于 <time dateTime={view.asOf}>{runDateFormat.format(new Date(view.asOf))}</time></p>
+    </div>}
+  </section>;
 }
 
 function RunHistory({ status, onStatusChange }) {

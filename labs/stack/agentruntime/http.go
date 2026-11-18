@@ -50,6 +50,15 @@ func Server(addr string, store *Store, releases []Release) *http.Server {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+	mux.HandleFunc("GET /runtime/overview", func(w http.ResponseWriter, r *http.Request) {
+		view, err := store.overview(r.Context())
+		if err != nil {
+			writeStoreError(w, err)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, view)
+	})
 	mux.HandleFunc("GET /runs", func(w http.ResponseWriter, r *http.Request) {
 		query, ok := parseHistoryQuery(r.URL.RawQuery)
 		if !ok {

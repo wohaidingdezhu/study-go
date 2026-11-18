@@ -108,6 +108,18 @@ Go 先筛选状态和 ID，再按 ID 降序多查询一条。翻页过程中提�
 mvn -q -f java/pom.xml compile exec:java -Dexec.mainClass=study.AgentHistoryProbe
 ```
 
+## 观察运行概览
+
+从「Agent 实验」打开运行概览。暂停 worker 后提交任务并刷新，待领取数量会增加。恢复 worker，等任务结束后再刷新，成功数和耗时样本会增加。这些操作可以在隔离环境运行，完整验收见下方。
+
+```bash
+curl -fsS http://127.0.0.1:18084/runtime/overview
+```
+
+`queue.running` 包含租约过期的任务。`queue.expiredLeases` 单列其中已经能被其他 worker 领取的数量。`oldestQueuedAt` 是当前仍待领取的任务中最早的创建时间。
+
+`recent` 按终态事件的时间统计最近 24 小时内的成功、失败和取消。工具权限被拒绝计入失败。P50 和 P95 统计成功任务从创建到完成的耗时，覆盖排队与执行，并显示样本数。没有成功样本时，两个分位数为 `null`。同一次查询使用同一个数据库时间与快照，页面可手动刷新。 [PostgreSQL 有序聚合与分位数](https://www.postgresql.org/docs/16/functions-aggregate.html#FUNCTIONS-ORDEREDSET-TABLE)
+
 ## 核心机制
 
 | 岗位方向 | 原型实现 | 代码入口 |
@@ -163,6 +175,8 @@ docker compose -f labs/agent-runtime/compose.yaml run --rm --no-deps worker eval
 python3 labs/agent-runtime/check.py
 ```
 
+已经构建过当前代码的镜像时，可以加 `--reuse-image`，使用同样的隔离环境和验收步骤。
+
 - 验证提交、幂等重放、冲突、证据引用和事件游标。
 - 在工具完成但检查点尚未写入时，对 worker 发送 `SIGKILL`。确认接手的 worker 用同一个任务 ID 完成，并只留下顺序连续的一份事件。
 - 暂停 worker，等接手的 worker 执行完成，再恢复旧 worker。确认旧租约写入被拒绝，最终任务和事件保持一致。
@@ -170,5 +184,6 @@ python3 labs/agent-runtime/check.py
 - 拒绝回归和过期发布，发布 v2 再回滚，验证新旧任务各按自身版本执行且保留两条带评估快照的审计记录。
 - 读取任务历史第一页，再创建新任务。继续用原游标读第二页，验证顺序、筛选、无重复记录和非法参数处理。
 - 在默认版本切换后并发重试一个已取消任务，再重试一个失败任务。确认各自只生成一个直接重试，继承原版本，原任务和事件仍可读取。
+- 检查运行概览。对照空样本、过期租约和 24 小时窗口，用 100 ms 与 300 ms 两个样本验证 P50 和 P95。
 
 结束本机演示时执行 `docker compose -f labs/agent-runtime/compose.yaml down`，命名卷中的记录仍可在下次启动时读取。

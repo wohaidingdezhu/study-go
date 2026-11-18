@@ -20,7 +20,7 @@ ASSETS = {
     "/assets/app.js": ("assets/app.js", "text/javascript; charset=utf-8"),
 }
 AGENT_PATHS = {
-    "GET": re.compile(r"/(?:releases|readyz|runs(?:/[1-9][0-9]*(?:/events)?)?)\Z"),
+    "GET": re.compile(r"/(?:releases|readyz|runtime/overview|runs(?:/[1-9][0-9]*(?:/events)?)?)\Z"),
     "POST": re.compile(r"/runs(?:/[1-9][0-9]*/(?:cancel|retry))?\Z"),
 }
 GUIDE_DIRS = {"docs", "exercises", "go", "java", "labs", "scripts"}
