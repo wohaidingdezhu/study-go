@@ -63,7 +63,20 @@ AI Agent 可以沿同一个订单项目一起学习。完成 HTTP 对照后，�
 
 ## 检查学习环境
 
-从项目根目录执行 `bash scripts/study-doctor.sh`，查看 Go、JDK、Maven 和其他工具。进阶实验加上 `--docker`，同时确认 Docker 引擎可连接。
+从项目根目录执行 `bash scripts/study-doctor.sh`，检查基础课需要的 Go、Java 运行器、JDK 编译器、Maven、Python 和 curl。可以按当前阶段选择检查范围，失败项会显示所需版本。
+
+| 当前准备做什么 | 环境检查命令 |
+| --- | --- |
+| 语法与内存 HTTP 服务 | `bash scripts/study-doctor.sh` |
+| 本机 React 工作台 | `bash scripts/study-doctor.sh --profile web` |
+| Electron 双语言商品查询 | `bash scripts/study-doctor.sh --profile electron` |
+| 本机 Agent 轨迹与评估 | `bash scripts/study-doctor.sh --profile agent` |
+| 订单容器实验 | `bash scripts/study-doctor.sh --docker` |
+| Agent 容器实验与本机调试 | `bash scripts/study-doctor.sh --profile agent --docker` |
+
+工作台检查 Node.js 18+ 和 Python 3.9+，Electron 检查 Node.js 22.12+，Agent 检查 Go 1.26+。`--docker` 增加 Compose 和引擎连接检查，也可以与其他阶段组合。运行 `--help` 可查看参数。
+
+构建带 Agent 回放的静态工作台时，分别运行 `--profile web` 和 `--profile agent`，确认网页工具与回放生成工具都已准备好。
 
 ## 先跑一段语法对照
 

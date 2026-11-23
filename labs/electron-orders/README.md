@@ -12,6 +12,8 @@
 
 准备 Node.js 22.12+、npm，以及 [Go、JDK 和 Maven](../../README.md#检查学习环境)。以下命令都从仓库根目录执行。第一、第二条启动命令各占一个终端，服务已经在默认端口运行时直接复用。
 
+先运行 `bash scripts/study-doctor.sh --profile electron`。若提示 Node.js 版本过低，切换到 22.12 或以上版本，重新检查通过后再安装 Electron 依赖。
+
 ```bash
 # 终端 1 · Go
 (cd go && go run ./cmd/orders)

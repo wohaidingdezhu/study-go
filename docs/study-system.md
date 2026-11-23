@@ -11,6 +11,7 @@
 从项目根目录运行，需要 Node.js 18+、npm 和 Python 3.9+。首次下载依赖后，页面可以在本机离线运行，打开 [学习工作台](http://127.0.0.1:4173)。
 
 ```bash
+bash scripts/study-doctor.sh --profile web
 npm --prefix web ci
 npm --prefix web run build
 npm --prefix web start

@@ -39,6 +39,7 @@ bash scripts/study-doctor.sh
 需要时启动 [React 学习工作台](study-system.md#react-工作台)，在页面记录证据并复习。初次运行先安装和构建，后续可以直接启动。
 
 ```bash
+bash scripts/study-doctor.sh --profile web
 npm --prefix web ci
 npm --prefix web run build
 npm --prefix web start
@@ -100,7 +101,7 @@ python3 --version
 bash scripts/study-doctor.sh
 ```
 
-`ls` 应能看到 `go`、`java`、`docs` 和 `labs`。`java` 用来运行程序，`javac` 用来编译 Java 源码，`go run` 会编译并运行 Go 程序。环境检查也会检查 Maven 和 Docker Compose，后者在 Day 15 的容器实验中使用，只有这一项缺失时可先记录下来并继续第一周。
+`ls` 应能看到 `go`、`java`、`docs` 和 `labs`。`java` 用来运行程序，`javac` 用来编译 Java 源码，`go run` 会编译并运行 Go 程序。默认环境检查对应基础课，检查 Go、Java、JDK、Maven、Python 和 curl。Day 15 再加 `--docker` 检查容器工具和引擎。
 
 接着分别运行两版购物车。
 
@@ -259,7 +260,7 @@ Day 3 的 Catalog 是独立的语法演示，其中录入了商品 2。这里的
 | --- | --- | --- |
 | 找不到 `go`、`java`、`javac` 或 `mvn` | 对应的版本命令，Java 的运行环境与编译器是否都可用 | 补齐缺少的工具后重开终端，重新检查版本；JDK 与 Maven 的步骤见 [安装说明](../README.md#先跑一段语法对照) |
 | 找不到 `java/...` 文件或 Go 提示目录不对 | `pwd` 与 `ls` 是否显示仓库根目录 | 回到含 `go`、`java`、`docs` 的目录，按原命令继续 |
-| Docker Compose 检查失败 | 第一周所需的 Go、JDK、Maven、Python 是否可用 | 先完成第一周，Day 15 再按容器章节准备 Docker |
+| 容器阶段的 Docker Compose 或引擎检查失败 | 使用的阶段参数、Compose 版本和引擎是否启动 | 按 [容器启动说明](../README.md#启动进阶实验) 处理后重跑带 `--docker` 的检查 |
 | `address already in use` 或 Java 绑定端口失败 | 对应端口是否已有这次练习的服务 | 先查询已有服务；需要重启时，在原启动终端按 Ctrl+C 后再启动 |
 | `curl` 无法连接或等待超时 | 服务终端的启动输出、端口和进程是否仍在运行 | 用启动命令恢复对应服务，再查同一地址 |
 | 商品查询得到 404 | 当前进程的初始化数据以及请求中的商品编号 | 用 `/products/1` 验证正常路径，再对照源码解释缺失编号 |
@@ -288,8 +289,11 @@ mvn -f java/pom.xml test
 Day 13 的入门命令如下。当前由确定性模型适配器按规则产生决策，状态在内存中推进。
 
 ```bash
+bash scripts/study-doctor.sh --profile agent
 (cd labs/stack && go run ./cmd/agent-runtime trace ops-runbook-v1 'Redis 下线后商品查询怎么办？')
 ```
+
+Day 12 启动 Electron 前，运行 `bash scripts/study-doctor.sh --profile electron`，核对当前终端的 Node.js 版本及两种后端的启动工具。工作台可单独用 `--profile web` 检查。
 
 ## 第三阶段 · PostgreSQL 与数据正确性
 

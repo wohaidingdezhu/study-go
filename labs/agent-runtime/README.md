@@ -5,6 +5,7 @@
 首次接触 Agent 时，从 [合并学习路线](../../docs/agent-app-roadmap.md) 开始。在仓库根目录执行下面的命令，用自选问题观察 `tool_requested → tool_completed → run_completed`。依赖准备好以后可以离线运行，当前由确定性适配器按规则产生决策，步骤结果保存在内存。
 
 ```bash
+bash scripts/study-doctor.sh --profile agent
 (cd labs/stack && go run ./cmd/agent-runtime trace ops-runbook-v1 'Redis 下线后商品查询怎么办？')
 ```
 
@@ -47,6 +48,8 @@ curl -fsS http://127.0.0.1:18084/releases
 从仓库根目录生成回放 JSON，或启动静态预览。Go 版本要求见 `labs/stack/go.mod`。
 
 ```bash
+bash scripts/study-doctor.sh --profile agent
+bash scripts/study-doctor.sh --profile web
 (cd labs/stack && go run ./cmd/agent-runtime replay)
 npm --prefix web ci
 npm --prefix web run build:pages
