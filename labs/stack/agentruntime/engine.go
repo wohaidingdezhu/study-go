@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+// 任务状态描述一次运行的生命周期。queued 可被领取，running 表示已有 worker 领取。
+// succeeded、failed、cancelled 是终态，分别表示正常结束、执行失败和取消完成。
 const (
 	Queued    = "queued"
 	Running   = "running"
@@ -15,6 +17,8 @@ const (
 	Cancelled = "cancelled"
 )
 
+// Release 保存运行版本及其执行限制。任务创建后绑定版本，恢复时按相同配置继续。
+// MaxSteps 限制状态推进次数，AllowedTools 列出这个版本可以调用的工具。
 type Release struct {
 	ID           string   `json:"id"`
 	Owner        string   `json:"owner"`
@@ -23,16 +27,20 @@ type Release struct {
 	MaxSteps     int      `json:"maxSteps"`
 }
 
+// ToolCall 是待执行工具的名称与参数，类似一次结构化的函数调用请求。
+// 本例只用 Query 表达参数。执行器还需检查工具存在、权限与参数有效性，随后才执行。
 type ToolCall struct {
 	Name  string `json:"name"`
 	Query string `json:"query"`
 }
 
+// Evidence 是工具找到的一条来源资料。ID 用于引用核对，Text 是提供给模型的内容。
 type Evidence struct {
 	ID   string `json:"id"`
 	Text string `json:"text"`
 }
 
+// Observation 保存一次工具执行的结果，供下一轮模型决策读取，这一步称为结果回填。
 type Observation struct {
 	Tool     string     `json:"tool"`
 	Evidence []Evidence `json:"evidence"`
@@ -43,7 +51,10 @@ type Answer struct {
 	Citations []string `json:"citations"`
 }
 
-// Checkpoint 是一次运行的可恢复状态。持久化待执行工具和已完成工具的结果，换 worker 后也能继续。
+// Checkpoint（检查点）保存一次运行推进到了哪里，持久化后换 worker 也能继续。
+// Pending 是待执行工具，Observations 是已取得的结果，Answer 和 Error 记录终止结果。
+// *ToolCall 是 Go 指针，nil 表示当前没有待执行工具，Java 常用可空引用表达类似状态。
+// json 标签规定 JSON 字段名，omitempty 让可选字段在零值时省略。
 type Checkpoint struct {
 	Pending      *ToolCall     `json:"pending,omitempty"`
 	Observations []Observation `json:"observations,omitempty"`
@@ -51,24 +62,33 @@ type Checkpoint struct {
 	Error        string        `json:"error,omitempty"`
 }
 
+// Decision 表示模型提出的下一步。当前契约要求 Call 与 Answer 恰好有一项有值。
 type Decision struct {
 	Call   *ToolCall
 	Answer *Answer
 }
 
-// Model 是执行循环使用的最小接口。worker 从持久化检查点重新构造调用。
+// Model 是执行循环使用的最小接口。Go 的类型实现 Next 方法即可满足这个接口。
+// 可对照 Java 的 interface 与 implements。本例由 RunbookModel 实现，真实模型可另写适配器。
+// Next 读取问题与检查点，返回下一步决策或 error。ctx 传递调用的取消信号与截止时间。
 type Model interface {
 	Next(context.Context, string, Checkpoint) (Decision, error)
 }
 
+// Tool 是函数类型，约定每个工具的输入输出，便于按名称放进同一个注册表。
+// []Evidence 是 Go 切片，可类比 Java 的 List<Evidence>，error 交给调用方检查并处理。
 type Tool func(context.Context, string) ([]Evidence, error)
 
+// Engine 负责把模型决策变成受控执行，包含权限、参数、步骤预算和回答引用检查。
+// Tools 是 map，将工具名映射到实现函数，承担“工具注册表”的作用。
 type Engine struct {
 	Release Release
 	Model   Model
 	Tools   map[string]Tool
 }
 
+// Transition 是一次状态推进的结果。Kind 用于记录事件，State 用于保存下一份检查点。
+// 一个任务会产生多个事件，可以顺着事件序号还原它先请求了什么、再获得了什么。
 type Transition struct {
 	Kind   string
 	Status string
@@ -109,6 +129,7 @@ func (e Engine) Advance(ctx context.Context, input string, step int, state Check
 		}
 		observation := Observation{Tool: call.Name, Evidence: evidence}
 		state.Pending = nil
+		// append 将结果追加到上下文，下一次 Next 才能基于这次工具结果继续决定。
 		state.Observations = append(state.Observations, observation)
 		return Transition{Kind: "tool_completed", Status: Queued, State: state, Data: observation}
 	}
@@ -141,7 +162,8 @@ func failure(state Checkpoint, kind, reason string, call *ToolCall) Transition {
 	}{Code: reason, Call: call}}
 }
 
-// grounded 核对引用 ID 是否来自本次检索。引用存在性和手册内容的正确性需要各自验证。
+// grounded 做引用来源核对，确认回答引用的 ID 来自本次工具结果。
+// 资料关联到回答的过程常称为 grounding。这里实现的是引用存在性检查，内容支持度需另行评估。
 func grounded(answer *Answer, observations []Observation) bool {
 	if strings.TrimSpace(answer.Text) == "" {
 		return false
@@ -164,6 +186,7 @@ func grounded(answer *Answer, observations []Observation) bool {
 type RunbookModel struct{}
 
 func (RunbookModel) Next(ctx context.Context, input string, state Checkpoint) (Decision, error) {
+	// context 的取消需要被调用代码主动检查或传给支持它的库，才能及时结束工作。
 	if err := ctx.Err(); err != nil {
 		return Decision{}, err
 	}
@@ -203,6 +226,8 @@ func searchRunbook(ctx context.Context, query string, limit int) ([]Evidence, er
 		return nil, err
 	}
 	query = strings.ToLower(query)
+	// 检索先给每条手册按关键词命中数打分，再排序并取前 limit 条，通常称为 top-k。
+	// 本例用于学习“检索资料再组织回答”的过程，匹配依据是关键词，计数单位是手册条目。
 	type match struct {
 		score    int
 		evidence Evidence

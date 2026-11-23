@@ -9,15 +9,19 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// 租约让崩溃后遗留的运行中任务重新可领取。每次领取只负责一个步骤。
+// 租约（lease）给 worker 一段有期限的任务占用权，超时后其他 worker 可重新领取。
+// worker 崩溃时无法主动交还任务，租约到期让任务仍能继续。每次领取只负责一个步骤。
 const leaseDuration = 6 * time.Second
 
+// Work 是后台执行循环。API 先接收任务，worker 再领取、计算和提交，适合跨多步的任务。
 func Work(ctx context.Context, store *Store, engines map[string]Engine, checkpointDelay time.Duration) {
 	releases := make([]string, 0, len(engines))
 	for release := range engines {
 		releases = append(releases, release)
 	}
 	for ctx.Err() == nil {
+		// WithTimeout 从父 context 派生一个带截止时间的调用预算。
+		// 调用后执行 cancel 释放定时器，也让相关子操作收到取消信号。
 		claimCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		run, err := store.Claim(claimCtx, releases, leaseDuration)
 		cancel()
@@ -41,6 +45,8 @@ func Work(ctx context.Context, store *Store, engines map[string]Engine, checkpoi
 			return
 		}
 		commitCtx, cancel := context.WithTimeout(ctx, time.Second)
+		// 计算完成后才提交检查点。若在这两步之间崩溃，接手的 worker 会重跑未提交步骤。
+		// 只读手册可安全重读，扣款、发消息等副作用需要在对应系统使用稳定幂等键去重。
 		err = store.Commit(commitCtx, run, result)
 		cancel()
 		if err != nil {

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'">
+    <title>订单学习 · Electron</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="renderer.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <header><h1>商品查询</h1><p>通过一条 IPC 请求，对照 Go 和 Java 的 HTTP 响应。</p></header>
+      <form id="lookup">
+        <label for="product">商品 ID</label>
+        <div class="actions">
+          <input id="product" inputmode="numeric" pattern="[1-9][0-9]*" maxlength="19" value="1" required>
+          <button id="submit">查询两套后端</button>
+        </div>
+      </form>
+      <p class="status" id="status" role="status"></p>
+      <section id="trace" hidden>
+        <h2>执行路径</h2>
+        <p class="path">Renderer → Preload → IPC → Main → HTTP</p>
+        <p>请求 ID <code id="request-id"></code></p>
+        <div class="results" id="results"></div>
+      </section>
+    </main>
+  </body>
+</html>

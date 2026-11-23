@@ -2,6 +2,22 @@
 
 用一个订单编号串起 HTTP、PostgreSQL 和 Java 消费者，练习回答「下单成功了，通知现在走到哪一步」。这章可以复用 [第 03 章](03-database.md) 里已经创建的订单，下面的查询只读取状态。还没有订单时，可以先做第 03 章的「跟一笔订单」。
 
+## 从概念找到源码
+
+先沿一笔订单读下表中的源码注释。每次只看一行，合上代码预测结果，再按对应章节验证。使用独立练习栈时，HTTP 地址改为 `18082`，容器操作用 `bash scripts/practice-stack.sh`，启动方法见 [独立环境](15-capstone.md#启动独立练习环境)。
+
+| 当前要理解的概念 | 注释与代码入口 | 可以验证什么 |
+| --- | --- | --- |
+| handler、JSON、业务校验 | [Go HTTP](../go/order/http.go) · [Java HTTP](../java/src/main/java/study/OrderServer.java) | 同一数量为 0 的请求在两边都返回 400，尚未进入库存写入 |
+| 互斥锁、临界区、内存快照 | [Go MemoryStore](../go/order/store.go) · [Java MemoryStore](../java/src/main/java/study/MemoryStore.java) | 按 [并发练习](01-languages.md) 观察同一进程内共享状态的保护范围，再解释第二个进程为何有自己的锁 |
+| 主键、唯一约束、外键、CHECK | [PostgreSQL 初始化](../labs/stack/init.sql) | 在独立实验环境中尝试无效库存、重复幂等键和不存在的商品引用，说明分别被哪项规则拒绝 |
+| 事务、条件更新、回滚 | [Go PostgreSQL 存储](../labs/stack/store.go) · [Java Spring Service](../labs/spring-orders/src/main/java/study/springorders/OrderService.java) | 用现有 [Go 并发验收](03-database.md) 与 [Java 隔离验收](../labs/spring-orders/README.md) 核对库存、订单行数和回滚 |
+| Cache-Aside、回源、TTL | [Go 商品读取与写后删除](../labs/stack/store.go) | 连续读、写订单后读、停止 Redis 后读，按 [缓存练习](04-cache.md) 对照 MISS、HIT 与 BYPASS |
+| outbox、发布确认、路由 | [Go 写入 outbox](../labs/stack/store.go) · [Go relay](../labs/stack/relay.go) | 先查订单与事件是否一起提交，再检查 `published_at` 和发布日志 |
+| 消费幂等、ACK、重投 | [Java NotificationWorker](../java/src/main/java/study/NotificationWorker.java) | 暂停与恢复消费者，按 [队列练习](05-messaging.md) 核对事件 ID、通知行数和确认时机 |
+
+同一条业务链有多处提交点。订单接口成功表示业务事务已提交，relay 的发布确认对应 broker 接收发布，消费者 ACK 则在通知写库之后。下面三步分别验证这些位置。复习时把进程崩溃放到任意相邻两步之间，先预测哪一步可能重复、哪个约束会去重，再回到注释核对。
+
 ## 1. 确认 API 能查到订单
 
 从创建订单的响应头 `Location` 里找到路径。假设是 `/orders/1`，把下面的 `1` 换成你实际拿到的编号。

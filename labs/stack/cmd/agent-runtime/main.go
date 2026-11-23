@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,7 +24,7 @@ func main() {
 	// 评估报告走 stdout，命令错误走 stderr，调用方可直接读取 JSON 报告。
 	cliErrors := log.New(os.Stderr, "", 0)
 	if len(os.Args) < 2 {
-		cliErrors.Fatal("usage: agent-runtime api | worker | eval [release] | replay | publish <expected> <candidate>")
+		cliErrors.Fatal("usage: agent-runtime api | worker | eval [release] | replay | trace <release> <input> | publish <expected> <candidate>")
 	}
 	// 本地 Ctrl+C 和容器的 SIGTERM 都会取消运行中的工作，逐步退出。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -34,6 +35,25 @@ func main() {
 }
 
 func run(ctx context.Context, mode string, args []string) error {
+	if mode == "trace" {
+		// 输入上限与手册工具一致。只在内存中演练，初学时可直接观察一次调用。
+		if len(args) != 2 || strings.TrimSpace(args[1]) == "" || len(args[1]) > 512 {
+			return errors.New("usage: agent-runtime trace <release> <input of 1..512 UTF-8 bytes>")
+		}
+		for _, engine := range agentruntime.Catalog() {
+			if engine.Release.ID == args[0] {
+				result := agentruntime.Trace(ctx, engine, args[1])
+				if err := json.NewEncoder(os.Stdout).Encode(result); err != nil {
+					return err
+				}
+				if result.Status != agentruntime.Succeeded {
+					return fmt.Errorf("trace failed: %s", result.Error)
+				}
+				return nil
+			}
+		}
+		return fmt.Errorf("unknown release %q", args[0])
+	}
 	if mode == "replay" {
 		if len(args) != 0 {
 			return errors.New("usage: agent-runtime replay")

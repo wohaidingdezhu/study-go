@@ -35,6 +35,7 @@ type Order struct {
 
 // Store 描述 HTTP 层需要的存储操作。内存版和 PostgreSQL 版提供同样的方法。
 // context 会把请求取消和超时传给数据库等外部依赖。
+// HTTP 层依赖这组接口，可复用相同路由来切换存储实现，这就是此处的依赖抽象。
 type Store interface {
 	Ping(context.Context) error
 	Product(context.Context, int64) (Product, error)
@@ -45,6 +46,9 @@ type Store interface {
 	Create(context.Context, string, Request) (Order, bool, error)
 }
 
+// MemoryStore 是进程内存储，状态随进程退出而丢失。两次独立启动各有自己的库存和锁。
+// Mutex 是互斥锁，让访问同一份共享状态的 goroutine 在临界区内依次执行。
+// Java 版用同一实例的 synchronized 方法协调并发，可沿 MemoryStore.java 对照。
 type MemoryStore struct {
 	mu      sync.Mutex
 	product Product
@@ -78,6 +82,7 @@ func (s *MemoryStore) Product(_ context.Context, id int64) (Product, error) {
 func (s *MemoryStore) Order(_ context.Context, id int64) (Order, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// map 查询的第二个返回值表明键是否存在，避免把“缺失”误认成字段全为零的订单。
 	value, ok := s.orders[id]
 	if !ok {
 		return Order{}, ErrNotFound
@@ -87,6 +92,7 @@ func (s *MemoryStore) Order(_ context.Context, id int64) (Order, error) {
 
 func (s *MemoryStore) ListOrders(_ context.Context, maxRows int, before int64) ([]Order, error) {
 	// 锁只保护读取共享的 map，排序在取出快照后执行。
+	// 这里复制的是由整数构成的 Order 值，解锁后处理自己的切片，缩短持锁时间。
 	s.mu.Lock()
 	items := make([]Order, 0, len(s.orders))
 	for _, value := range s.orders {
@@ -104,10 +110,12 @@ func (s *MemoryStore) ListOrders(_ context.Context, maxRows int, before int64) (
 
 func (s *MemoryStore) Create(_ context.Context, key string, request Request) (Order, bool, error) {
 	// 整段操作持有同一把锁，防止两个请求基于同一份库存或同一个幂等键同时创建订单。
+	// 临界区包含“检查后修改”整个过程。只锁住扣减时，两个请求可能已在锁外读到相同库存。
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// 先找旧订单。请求重试时，即使现在已经卖完，也要返回第一次创建的结果。
+	// 同一键的参数必须相同，才能认定是同一业务请求。键相同而数量改变属于冲突。
 	if existing, ok := s.keys[key]; ok {
 		if existing.ProductID != request.ProductID || existing.Quantity != request.Quantity {
 			return Order{}, false, ErrKeyConflict

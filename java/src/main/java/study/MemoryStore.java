@@ -7,6 +7,8 @@ import java.util.Map;
 
 // 入门版本把状态放在单个 Java 进程里，退出后两个 Map 和库存都会重置。
 final class MemoryStore {
+    // record 自动提供构造器、字段访问器和按值比较，适合表示接口中的数据。
+    // 本例各字段都是数值或 String，创建后通过新 record 表达更新，可对照 Go 的结构体值。
     record Product(long id, String name, int stock) {}
     record Request(long productId, int quantity) {}
     record Order(long id, long productId, int quantity) {}
@@ -29,6 +31,8 @@ final class MemoryStore {
     private final Map<String, Order> keys = new HashMap<>();
     private long nextId = 1;
 
+    // synchronized 实例方法持有 this 的监视器锁，与其他锁定同一实例的方法互斥。
+    // HashMap 的并发读写由此保护，可对照 Go MemoryStore 的 Mutex。
     synchronized Product product(long id) {
         if (product.id() != id) {
             throw new Rejected(404, "not_found");
@@ -50,6 +54,7 @@ final class MemoryStore {
             snapshot = List.copyOf(orders.values());
         }
         // 快照里的 record 可安全读取。筛选和排序不必持有下单使用的锁。
+        // stream 把筛选、排序和截取组合成处理流程，最后由 toList 生成结果列表。
         return snapshot.stream()
                 .filter(order -> before == 0 || order.id() < before)
                 .sorted(Comparator.comparingLong(Order::id).reversed())
@@ -58,6 +63,7 @@ final class MemoryStore {
     }
 
     synchronized Creation create(String key, Request request) {
+        // 此锁协调当前 Java 实例的请求。多实例部署时，需要共享数据库约束来保护同一业务。
         // 先处理重试。用同一个键且参数一样就返回原订单，参数变了则拒绝。
         var existing = keys.get(key);
         if (existing != null) {

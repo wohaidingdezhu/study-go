@@ -1,0 +1,32 @@
+:root {
+  font-family: 'DM Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+  color: #192d23;
+  background: #f5f6f2;
+}
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 900px; margin: auto; padding: 42px clamp(18px, 6vw, 55px); }
+h1 { margin: 0; font-size: 36px; letter-spacing: -.045em; }
+h2 { margin: 0 0 9px; font-size: 18px; }
+h3 { margin: 0 0 7px; font-size: 15px; }
+p { color: #4a6354; line-height: 1.6; }
+form { margin-top: 26px; padding: 18px; border: 1px solid #dce7db; border-radius: 12px; background: #fff; }
+label { display: block; margin-bottom: 7px; font-size: 13px; font-weight: 700; }
+.actions { display: flex; gap: 10px; flex-wrap: wrap; }
+input, button { min-height: 42px; border-radius: 8px; font: inherit; }
+input { width: min(220px, 100%); padding: 7px 11px; border: 1px solid #c5d7cb; color: inherit; }
+button { padding: 7px 14px; border: 0; background: #24543c; color: #fff; cursor: pointer; }
+button:disabled { opacity: .6; cursor: default; }
+:focus-visible { outline: 2px solid #348759; outline-offset: 3px; }
+.status { color: #754838; }
+.status:empty { margin: 0; }
+#trace { margin-top: 23px; }
+.path { font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
+code, pre { font-family: 'IBM Plex Mono', ui-monospace, monospace; }
+.results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+article { min-width: 0; padding: 15px; border: 1px solid #dce7db; border-radius: 12px; background: #fff; }
+article p { margin: 0; font-size: 13px; overflow-wrap: anywhere; }
+pre { min-height: 102px; margin-bottom: 0; padding: 11px; border-radius: 7px; background: #edf4ed; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+
+/* 窄窗口下依次显示 Go 和 Java 的结果。 */
+@media (max-width: 610px) { .results { grid-template-columns: 1fr; } }

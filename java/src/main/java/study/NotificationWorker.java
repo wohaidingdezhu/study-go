@@ -11,6 +11,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.concurrent.CountDownLatch;
 
+// 消费者从消息队列接收“订单已创建”事件，独立写入通知数据库，使下单与通知处理可以异步推进。
 public class NotificationWorker {
     private static final String QUEUE = "order.created";
     private static final ObjectMapper JSON = new ObjectMapper()
@@ -36,6 +37,7 @@ public class NotificationWorker {
             // 队列由 Go relay 声明，passive 只检查它是否存在。
             channel.queueDeclarePassive(QUEUE);
             // 每次最多 1 条未确认消息。basicConsume 的第二个参数 false 表示手动确认。
+            // 预取数量限制待处理工作，消费者慢下来时，更多消息继续留在队列等待。
             channel.basicQos(1);
             channel.basicConsume(QUEUE, false,
                     (tag, delivery) -> process(channel, delivery, database, user, password),
@@ -72,6 +74,7 @@ public class NotificationWorker {
                      ON CONFLICT (event_id) DO NOTHING
                      """)) {
             // JDBC 用 ? 绑定参数。唯一主键配合 ON CONFLICT 使相同事件只落库一次。
+            // 这是消费幂等。同一个 eventId 多次到达时，数据库仍只保留一条通知记录。
             statement.setLong(1, event.eventId());
             statement.setLong(2, event.orderId());
             // 连接默认自动提交，这条写入执行成功时就提交了。
@@ -90,6 +93,7 @@ public class NotificationWorker {
             return;
         }
 
+        // ACK（acknowledgement）确认当前投递已处理，RabbitMQ 收到确认后可移除对应消息。
         // 先落库再 ACK。若两者之间断线，消息可以重投，数据库会识别重复事件。
         channel.basicAck(tag, false);
         System.out.printf("%s event %d for order %d%n",

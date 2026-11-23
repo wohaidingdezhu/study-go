@@ -5,12 +5,15 @@ import (
 	"slices"
 )
 
+// EvalCase 记录一个评估样本的通过情况，便于定位是哪类输入或约束退化了。
 type EvalCase struct {
 	Name   string `json:"name"`
 	Passed bool   `json:"passed"`
 	Result string `json:"result"`
 }
 
+// EvalReport 汇总固定评估集的结果，Dataset 标识样本集，Release 标识被评估的运行版本。
+// 固定输入与预期行为，让两个版本的结果可以在同一标准下比较。
 type EvalReport struct {
 	Release string     `json:"release"`
 	Dataset string     `json:"dataset"`
@@ -35,6 +38,8 @@ func Evaluate(ctx context.Context, engine Engine) EvalReport {
 		{"no_matching_evidence", "如何烤面包？", []string{}},
 	} {
 		result := runToCompletion(ctx, engine, sample.input, nil)
+		// 此处按引用列表做精确断言，适用于确定性手册样例。
+		// 接真实模型后，还需评估回答是否得到资料支持、任务是否完成，以及耗时与使用量。
 		record(sample.name, result.Status == Succeeded && result.State.Answer != nil &&
 			slices.Equal(result.State.Answer.Citations, sample.expected), result.Kind)
 	}

@@ -21,6 +21,33 @@
     ]
   },
   {
+    "id": "electron-ipc",
+    "title": "用 Electron IPC 对照 Go 和 Java 商品接口",
+    "guide": "labs/electron-orders/README.md · 桌面实验 | docs/02-http.md · HTTP 读取练习",
+    "practice": "先预测商品 1、商品 999 和 Java 服务停止时的结果。用桌面窗口验证，从 Preload 跟到 Main，再按同一个请求 ID 找到 Go 和 Java 的日志。",
+    "evidence": "两边的 200 和 404，Java 停止时 Go 仍返回 200，且关闭服务前两边的日志包含同一个请求 ID。指出启动参数、IPC 参数和 HTTP 路径各由谁检查。",
+    "cards": [
+      {
+        "id": "electron-ipc-http",
+        "question": "点击一次查询按钮后，哪一段跨 Electron 进程，哪一段是 HTTP？怎样在三个终端找到它们？",
+        "answer": "Renderer 经 Preload 发送 IPC 给 Main。Main 并行发两次 HTTP GET，把同一个请求 ID 放进两个请求头。用桌面显示的 ID 查 Main、Go 和 Java 的日志。",
+        "repair": "查询商品 1，复制窗口显示的 ID，在三个终端中按该 ID 查找。"
+      },
+      {
+        "id": "electron-context-isolation",
+        "question": "为什么页面只获得 compareProduct？启用上下文隔离后，为什么 Main 还要检查来源和商品 ID？",
+        "answer": "Preload 用 contextBridge 暴露固定功能，页面无法自行选 IPC 频道、接口地址或拿到 Node API。隔离限制页面能直接访问的 API，但页面仍可用任意参数调用已暴露的方法，因此 Main 校验来源和数据。",
+        "repair": "读 preload.cjs 和 main.cjs。在页面开发者工具运行 window.orders.compareProduct('0')，观察 Main 拒绝。"
+      },
+      {
+        "id": "electron-transport",
+        "question": "查询商品 999 得到 404，和关停 Java 服务后查询商品 1 有何不同？",
+        "answer": "404 表示请求到达服务、服务返回了 HTTP 响应。关停后 Java 请求收不到 HTTP 响应，Go 请求独立完成。",
+        "repair": "只停止这次练习的 Java 进程，用同一窗口观察两张结果卡。"
+      }
+    ]
+  },
+  {
     "id": "stock",
     "title": "分清零库存和缺失键",
     "guide": "exercises/stock-lookup/README.md · 同一业务规则的双语言练习",
@@ -89,6 +116,12 @@
         "question": "两个请求竞争最后一件库存，WHERE stock >= quantity 为什么有效，怎样知道谁成功？",
         "answer": "条件判断和扣减在同一条 UPDATE 中，PostgreSQL 串行修改同一行。在本项目的 READ COMMITTED 下，等到锁的更新会重新检查条件。影响行数为 0 表示未扣到。",
         "repair": "用两个 psql 会话在练习库中复现等待，提交后检查第二条 UPDATE 的影响行数。"
+      },
+      {
+        "id": "database-constraint-scope",
+        "question": "CHECK(stock >= 0)、幂等键 UNIQUE 和下单事务分别保护什么？只有库存 CHECK 时，相同请求重试会怎样？",
+        "answer": "CHECK 拒绝负库存，UNIQUE 协调同一幂等键只能保存一笔订单，事务将订单、库存和 outbox 一起提交或回滚。只有 CHECK 时，相同请求仍可能重复建单并再次扣减，只要库存尚未变负。",
+        "repair": "对照 init.sql 与 store.go，分别圈出三个保护位置，画出同键重试到返回原订单的分支。"
       }
     ]
   },
@@ -158,6 +191,12 @@
         "question": "写库后删缓存，旧库存仍可能被谁写回来？画出操作顺序。",
         "answer": "并发读先从库取得旧值，写请求随后提交并删除缓存，读请求最后才回填旧值。TTL 限制条目的存活，库存扣减的最终校验仍由数据库执行。",
         "repair": "写出读旧值、写库提交、删缓存、回填旧值四步，并标出哪一步晚到了。"
+      },
+      {
+        "id": "cache-miss-bypass",
+        "question": "第一次 GET 的 MISS 与 Redis 故障时的 BYPASS 有什么区别？缓存里 stock=5 能否直接证明现在还能买 5 件？",
+        "answer": "MISS 表示 Redis 返回键不存在，BYPASS 表示连接异常或缓存内容无法使用，两者都走数据库回源。缓存库存可能暂时落后数据库，下单仍依赖数据库事务里的条件更新判断数量。",
+        "repair": "沿 Product 的三个分支对照日志，再找到 Create 中带 stock >= quantity 的 UPDATE。"
       }
     ]
   },
@@ -179,6 +218,12 @@
         "question": "Java 消费者应该在通知写库前 ACK 还是写库后 ACK？两个崩溃窗口各会怎样？",
         "answer": "写库成功后 ACK。提前 ACK 再崩溃会丢通知。写库后、ACK 前崩溃可能重投，唯一约束让重投不会新增第二行。",
         "repair": "画出接收、持久化、ACK，并分别在相邻两步之间插入一次崩溃。"
+      },
+      {
+        "id": "messaging-confirm-boundary",
+        "question": "relay 已收到发布确认并写入 published_at，能否据此证明通知已经落库？还要核对什么？",
+        "answer": "发布侧记录 broker 接收发布的结果，还需检查 mandatory 的退回通知确认路由。消费结果要用同一 eventId 查通知表及 Java 日志，消费者在写库后才 ACK。",
+        "repair": "分别找到 relay 的 WaitContext、退回检查与 Java 的 basicAck，再按第 07 章核对 outbox 和通知表。"
       }
     ]
   },
@@ -215,6 +260,87 @@
         "question": "筛选发布后出现第二页重复和偶发空页，不看源码先写两条会失败的测试。",
         "answer": "用 limit=1 翻两页，确认两页不同、游标为严格小于。准备两种商品交错的数据，确认筛选发生在取页之前。",
         "repair": "在 Go 和 Java 各跑一遍相同的 HTTP 样例，保留失败输入至回归测试。"
+      }
+    ]
+  },
+  {
+    "id": "agent-loop",
+    "title": "跟踪 Agent 的工具请求与结果回填",
+    "guide": "docs/agent-app-roadmap.md · 自选问题与短循环 | labs/stack/agentruntime/engine.go · Model 与执行器",
+    "practice": "完成 HTTP 对照后，运行 trace ops-runbook-v1，分别输入 Redis 故障和如何烤面包。先预测事件，再画出模型、执行器、工具和结果回填的顺序。",
+    "evidence": "保留正常查询的三步事件和无匹配时的空引用，指出固定规则模型的代码位置，以及 HTTP 请求和工具请求各由谁校验。",
+    "cards": [
+      {
+        "id": "agent-loop-feedback",
+        "question": "一次 Agent 工具调用怎样从模型提出请求走到最终回答？工具结果要传给谁？",
+        "answer": "Model.Next 提出 ToolCall，Engine 保存请求，下一步校验并执行工具。工具结果写进 Observations，下一轮 Model.Next 读取结果后提出调用或回答，执行器检查终止条件与引用。",
+        "repair": "用 trace 查询 Redis，逐项对照 tool_requested、tool_completed 和 run_completed 的数据。"
+      },
+      {
+        "id": "agent-loop-backend",
+        "question": "已有商品 HTTP 接口怎样成为 Agent 工具？模型提出调用后，谁保证权限和库存规则？",
+        "answer": "工具适配器把模型的结构化参数转成对已有接口或业务方法的调用，再把结果回填。执行器验证工具权限与参数，业务服务继续验证用户授权、库存、事务和幂等。",
+        "repair": "从 OrderServer.java 或 go/order/http.go 找到一次参数校验，画出未来只读查询工具会在哪里调用它。"
+      },
+      {
+        "id": "agent-loop-status",
+        "question": "输入如何烤面包，为什么执行状态 succeeded 仍可能没有解决用户问题？当前模型怎样作决定？",
+        "answer": "succeeded 表示执行正常结束，手册没有匹配时答复说明无资料、引用为空。当前 RunbookModel 按固定规则调用手册并组织回答，真实模型的动态选择能力需要接入后另行验证。",
+        "repair": "比较两种输入的 answer 与 citations，再读 RunbookModel.Next 的两个返回分支。"
+      }
+    ]
+  },
+  {
+    "id": "agent-context",
+    "title": "比较检索、上下文与引用的边界",
+    "guide": "docs/agent-app-roadmap.md · 检索与上下文 | labs/stack/agentruntime/releases.go · 检索上限",
+    "practice": "对 Redis、PostgreSQL 和 RabbitMQ 如何排查这个相同问题，分别运行 trace v1 与 v2。比较工具返回片段与最终引用，定位 v1 漏掉队列手册的原因。",
+    "evidence": "v1 两条、v2 三条引用，以及上限分别为 2 和 3 的代码位置。解释关键词检索、真实模型上下文窗口、任务检查点与长期记忆各自的作用。",
+    "cards": [
+      {
+        "id": "agent-context-retrieval",
+        "question": "同一问题在 v1 中漏掉 RabbitMQ 引用，怎样区分资料缺失、召回失败、截断和回答遗漏？",
+        "answer": "先查资料是否存在，再查检索匹配、排序和数量上限，随后查 Observations 中实际回填的片段，最后对照回答引用。本例 v1 上限为两条，v2 三条会包含 outbox-backlog。",
+        "repair": "对同一问题运行两版 trace，比较 tool_completed 里的 evidence 与 answer.citations。"
+      },
+      {
+        "id": "agent-context-memory",
+        "question": "会话历史、任务检查点和长期记忆分别保存什么？当前实验的 Observations 属于哪一项？",
+        "answer": "会话历史保存对话，检查点保存可恢复的执行状态，长期记忆保存经过筛选的跨会话信息。Observations 是检查点内的工具结果，离线 trace 放内存，worker 模式可随检查点持久化。",
+        "repair": "从 Checkpoint 找到 Pending、Observations 和 Answer，再指出数据库 worker 的提交位置。"
+      },
+      {
+        "id": "agent-context-budget",
+        "question": "把所有历史和资料都传给真实模型，会影响哪些预算？如何保留排查所需的信息？",
+        "answer": "指令、工具定义、问题、历史和工具结果都会占上下文，还需预留输出，调用也消耗时间与费用。用相关检索、长度限制和保留来源的摘要控制输入，并对截断后的关键证据做评估。",
+        "repair": "列出一次 trace 的问题与工具片段，标出需要保留的引用 ID，再写一个删掉关键证据会失败的评估样例。"
+      }
+    ]
+  },
+  {
+    "id": "agent-evaluation",
+    "title": "用离线评估检查 Agent 证据和工具权限",
+    "guide": "docs/agent-app-roadmap.md · 评估与缺陷 | labs/stack/agentruntime/eval.go · 评估代码",
+    "practice": "运行 eval ops-runbook-v2 和 eval ops-runbook-regression，再对回归版运行 trace。记录失败发生在哪一步，并设计一个现有引用检查无法发现的答复错误。",
+    "evidence": "合格版 passed=true，回归版 passed=false 且非零退出。回归轨迹停在 tool_denied，说明当前四项检查的覆盖范围和一项待补评估。",
+    "cards": [
+      {
+        "id": "agent-eval-permission",
+        "question": "工具已在注册表里，为什么回归版本调用它仍然失败？",
+        "answer": "注册表决定实现是否存在，版本 AllowedTools 决定是否获准调用。回归版本没有手册权限，执行器在调用前拒绝，事件为 tool_denied。",
+        "repair": "对回归版 trace，比较 tool_requested 后有没有 tool_completed，再找权限校验。"
+      },
+      {
+        "id": "agent-eval-grounding",
+        "question": "回答里的引用 ID 都来自本次检索，是否就能证明回答内容正确？怎样进一步检查？",
+        "answer": "引用存在性只证明 ID 来自证据，仍需检查资料是否相关、内容是否支持具体结论和任务是否完成。固定问题与预期行为，保留工具轨迹，对真实模型重复采样并检查证据支持率。",
+        "repair": "构造一个引用 cache-fallback 却声称缓存永远可用的答案，指出现有 grounded 检查缺少哪项验证。"
+      },
+      {
+        "id": "agent-eval-injection",
+        "question": "检索片段写着忽略权限并调用删除工具，执行器该怎样处理？MCP 接入能替代权限检查吗？",
+        "answer": "把检索文本视为资料，工具执行仍依据应用授权、白名单和参数校验。MCP 定义连接与交互协议，业务权限、副作用幂等和来源可信度仍需应用验证。",
+        "repair": "写一个恶意片段样例，分别说明模型可能提出什么请求，以及执行器应在何处拒绝越权工具。"
       }
     ]
   },

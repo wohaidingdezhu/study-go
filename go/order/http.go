@@ -24,6 +24,7 @@ type orderPage struct {
 
 func HTTPServer(addr string, store Store) *http.Server {
 	// 路由器根据 HTTP 方法和路径选择处理函数，{id} 捕获路径中的商品或订单编号。
+	// handler 是处理一次请求的函数。r 提供请求数据，w 用来写响应状态、响应头和正文。
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /livez", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "live"})
@@ -39,6 +40,7 @@ func HTTPServer(addr string, store Store) *http.Server {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("GET /products/{id}", func(w http.ResponseWriter, r *http.Request) {
+		// 路径参数来自 URL，例如 /products/1 的 id 为字符串 "1"，先校验再交给业务层。
 		id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || id <= 0 {
 			writeError(w, http.StatusBadRequest, "invalid_id")
@@ -78,6 +80,7 @@ func HTTPServer(addr string, store Store) *http.Server {
 	})
 	mux.HandleFunc("POST /orders", func(w http.ResponseWriter, r *http.Request) {
 		// 客户端为同一笔下单重试时复用这个键。存储层负责查找原来创建的订单。
+		// 幂等让重复的同一业务请求返回原订单，避免网络超时重试造成再次扣库存。
 		key := r.Header.Get("Idempotency-Key")
 		if !headerIDPattern.MatchString(key) {
 			writeError(w, http.StatusBadRequest, "invalid_idempotency_key")
@@ -90,6 +93,7 @@ func HTTPServer(addr string, store Store) *http.Server {
 		}
 
 		// 先限制请求体的大小，再把 JSON 反序列化到 Go 的 Request。
+		// 反序列化把文本字段转换成程序中的结构体字段，可对照 Java 的 JSON 对象映射。
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 		decoder.DisallowUnknownFields()
 		var request Request

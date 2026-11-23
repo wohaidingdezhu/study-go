@@ -24,7 +24,7 @@ AGENT_PATHS = {
     "POST": re.compile(r"/runs(?:/[1-9][0-9]*/(?:cancel|retry))?\Z"),
 }
 GUIDE_DIRS = {"docs", "exercises", "go", "java", "labs", "scripts"}
-GUIDE_TYPES = {".md", ".go", ".java", ".py", ".sh", ".sql", ".yaml", ".xml"}
+GUIDE_TYPES = {".md", ".go", ".java", ".py", ".sh", ".sql", ".yaml", ".xml", ".cjs", ".js"}
 
 
 class RequestError(Exception):
@@ -141,7 +141,8 @@ class StudyHandler(BaseHTTPRequestHandler):
         except ValueError as error:
             raise RequestError(404, "找不到这份材料。") from error
         if relative.as_posix() != "README.md":
-            if not relative.parts or relative.parts[0] not in GUIDE_DIRS or path.suffix not in GUIDE_TYPES or any(part.startswith(".") for part in relative.parts):
+            private_path = any(part.startswith(".") or part == "node_modules" for part in relative.parts)
+            if not relative.parts or relative.parts[0] not in GUIDE_DIRS or path.suffix not in GUIDE_TYPES or private_path:
                 raise RequestError(404, "找不到这份材料。")
         if not path.is_file():
             raise RequestError(404, "找不到这份材料。")

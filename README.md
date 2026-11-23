@@ -24,9 +24,11 @@ python3 scripts/study.py today
 
 [Go × Java 后端招聘能力地图](docs/backend-job-roadmap.md)将公开岗位样本映射到可验证的练习。Java 可用 [Spring Boot + MySQL](labs/spring-orders/README.md) 实现与 Go 相同的订单契约。
 
-进阶方向是 [AI Agent Infra](docs/agent-infra-roadmap.md)。可以用同一套订单故障场景练任务恢复、发布门禁、版本回滚和事件审计。 [Go Agent Runtime](labs/agent-runtime/README.md)
+AI Agent 可以沿同一个订单项目一起学习。完成 HTTP 对照后，先走 [Go × Java × AI Agent 合并路线](docs/agent-app-roadmap.md)，用自选问题观察工具调用、检索、结果回填和评估。继续用 [Go Agent Runtime](labs/agent-runtime/README.md) 练任务恢复、发布门禁、版本回滚和事件审计，岗位进阶见 [AI Agent Infra](docs/agent-infra-roadmap.md)。
 
 第一次学后端，可以先完成第 01、02 章。先对照两边的代码，再发一次 HTTP 请求，顺着代码找到处理它的地方。到第 03 章再用 Docker，跟着一笔订单理解每个组件的作用。已经看到了浏览器里的商品 JSON，可以直接做[第 02 章的读取练习](docs/02-http.md#先读懂浏览器里的-json)。
+
+跑通两套商品接口后，接着做 [Electron × Go × Java 商品查询](labs/electron-orders/README.md)。从同一次点击追踪桌面 IPC 和两次后端 HTTP 请求，按请求 ID 对照两边日志。
 
 准备开始时，打开 [18 次学习任务和自测](docs/study-workbook.md)。要了解每一阶段对应哪些岗位能力，可以看 [Go 后端学习路线](docs/go-roadmap.md)。路线把公开岗位要求映射到五个学习阶段，每个阶段都有能亲手验证的目标。刚完成第 02 章，可以先跑第 08、09 章，再深入数据和分布式实验。
 

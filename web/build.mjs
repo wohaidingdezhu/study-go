@@ -34,7 +34,7 @@ if (!pages) {
 
   // 仅复制课程与示例源码。被 Git 忽略的个人进度、构建目录不会进入发布产物。
   const paths = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'README.md', 'docs', 'exercises', 'go', 'java', 'labs', 'scripts'], { cwd: '..', encoding: 'utf8' });
-  const types = new Set(['.md', '.go', '.java', '.py', '.sh', '.sql', '.yaml', '.xml']);
+  const types = new Set(['.md', '.go', '.java', '.py', '.sh', '.sql', '.yaml', '.xml', '.cjs', '.js']);
   for (const path of new Set(paths.split('\0'))) {
     if (!types.has(extname(path)) || path.split('/').some((part) => part.startsWith('.'))) continue;
     const source = join('..', path);

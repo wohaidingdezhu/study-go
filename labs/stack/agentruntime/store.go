@@ -18,6 +18,8 @@ var (
 	ErrRetryReleaseUnavailable = errors.New("the original release is no longer available")
 )
 
+// Run 是数据库中的一次任务。Input 保存问题，Step 记录进度，State 保存检查点。
+// LeaseEpoch 是租约代次，每次接手递增，用于拒绝旧 worker 的迟到提交。
 type Run struct {
 	ID         int64      `json:"id"`
 	Release    string     `json:"release"`
@@ -37,6 +39,7 @@ type Event struct {
 	CreatedAt time.Time       `json:"createdAt"`
 }
 
+// Store 负责持久化任务。连接池复用数据库连接，多次请求可以按需借用，结束后归还。
 type Store struct {
 	db *pgxpool.Pool
 }
@@ -60,6 +63,7 @@ func (s *Store) Create(ctx context.Context, key, release, input string) (Run, bo
 	if err != nil {
 		return Run{}, false, err
 	}
+	// defer 在函数退出时执行。提前返回会回滚事务，成功 Commit 后的回滚调用无实际改动。
 	defer tx.Rollback(ctx)
 
 	run, err := scanRun(tx.QueryRow(ctx, `
@@ -86,6 +90,7 @@ func (s *Store) Create(ctx context.Context, key, release, input string) (Run, bo
 }
 
 // commitNewRun 让新任务与首条事件同事务可见。重试任务的首条事件同时记录来源。
+// 事务把这两次写入作为一组提交，任何一步失败都回滚，避免出现有任务却缺首条事件的状态。
 func commitNewRun(ctx context.Context, tx pgx.Tx, run Run) error {
 	if _, err := tx.Exec(ctx, `INSERT INTO agent_events (run_id, seq, kind, data)
 		VALUES ($1, 1, 'run_created', jsonb_strip_nulls(jsonb_build_object('release', $2::text, 'retryOf', $3::bigint::text)))`,
@@ -190,6 +195,8 @@ func (s *Store) Events(ctx context.Context, id int64, after int) ([]Event, error
 
 func (s *Store) Claim(ctx context.Context, releases []string, lease time.Duration) (Run, error) {
 	// 抢占时跳过其他事务正在锁住的行。成功领取后重新计时，以数据库时钟判断租约。
+	// FOR UPDATE 锁住候选任务行，SKIP LOCKED 让并发 worker 跳过已锁行，继续找其他任务。
+	// 领取与增加代次在同一条 SQL 中完成，更新成功后该 worker 才取得这次执行权。
 	return scanRun(s.db.QueryRow(ctx, `
 		WITH candidate AS (
 			SELECT id FROM agent_runs
@@ -212,6 +219,7 @@ func (s *Store) Commit(ctx context.Context, run Run, result Transition) error {
 
 	var step int
 	// 恢复后的新 worker 会取得更高的 epoch，旧 worker 无法再提交。
+	// 这类代次校验称为 fencing。提交还检查运行状态与租约到期时间，UPDATE 匹配零行就拒绝。
 	err = tx.QueryRow(ctx, `
 		UPDATE agent_runs
 		SET step=step+1, status=$1, state=$2, lease_until=NULL

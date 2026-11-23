@@ -10,14 +10,18 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 
+// 这个 Java 客户端消费 Go 的 Agent API，两种语言通过 HTTP 和 JSON 约定交换数据。
+// 同一个 API 可以被网页、Java 程序或工具适配器调用，各自都要核对状态与返回字段。
 public final class AgentHistoryProbe {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     public static void main(String[] args) throws IOException, InterruptedException {
         URI base = URI.create(args.length > 0 ? args[0] : "http://127.0.0.1:18084");
+        // try-with-resources 在退出代码块时关闭客户端，可对照 Go 获取资源后用 defer 清理。
         try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()) {
             JsonNode first = fetch(client, base.resolve("/runs?limit=2"));
             Long last = printRows("第 1 页", first, null);
+            // 游标记录本页边界。下一页从更小的 ID 继续，新增的较大 ID 留在刷新后的首页。
             JsonNode cursor = first.required("nextCursor");
             if (!cursor.isNull()) {
                 long before = readID(cursor);
@@ -38,6 +42,7 @@ public final class AgentHistoryProbe {
         if (response.statusCode() != 200) {
             throw new IOException("Agent API 返回 HTTP " + response.statusCode());
         }
+        // 反序列化把响应的 JSON 文本解析成可读取字段的树，可对照 Go 的 json.Decoder。
         return JSON.readTree(response.body());
     }
 

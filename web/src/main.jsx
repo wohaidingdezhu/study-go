@@ -8,9 +8,10 @@ const nav = [
   ['review', '↻', '间隔复习'], ['agent', '>_', 'Agent 实验'],
 ];
 const stages = [
-  { title: '双语言订单 API', description: '接口契约、集合和自动化测试', ids: ['http', 'stock', 'idempotency'] },
+  { title: '双语言订单 API', description: '接口契约、桌面 IPC、集合和自动化测试', ids: ['http', 'electron-ipc', 'stock', 'idempotency'] },
   { title: '订单正确性', description: '并发、事务和查询', ids: ['concurrency', 'database', 'pagination', 'spring-mysql'] },
   { title: '跨服务与交付', description: '缓存、消息、可观测和综合实战', ids: ['cache', 'messaging', 'reliability', 'project'] },
+  { title: 'Agent 应用与上下文', description: 'HTTP 入门后可穿插工具循环、检索与评估', ids: ['agent-loop', 'agent-context', 'agent-evaluation'] },
   { title: 'Agent Infra', description: '任务恢复、评估、发布与回滚', ids: ['agent-runtime', 'agent-release'] },
 ];
 

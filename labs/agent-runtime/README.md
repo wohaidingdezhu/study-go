@@ -2,6 +2,14 @@
 
 提交一个订单系统故障，Agent 会查询本地运行手册，返回排查步骤和来源。API 接收任务，worker 分步执行，PostgreSQL 保存检查点和事件。每次工具调用的请求、结果和最终答复都可以通过 HTTP 查回。
 
+首次接触 Agent 时，从 [合并学习路线](../../docs/agent-app-roadmap.md) 开始。在仓库根目录执行下面的命令，用自选问题观察 `tool_requested → tool_completed → run_completed`。依赖准备好以后可以离线运行，当前由确定性适配器按规则产生决策，步骤结果保存在内存。
+
+```bash
+(cd labs/stack && go run ./cmd/agent-runtime trace ops-runbook-v1 'Redis 下线后商品查询怎么办？')
+```
+
+可选版本还有 `ops-runbook-v2` 和 `ops-runbook-regression`。回归版本预期产生 `tool_denied` 并非零退出，用于学习权限拦截。下方的 worker 和数据库实验继续使用相同执行器，把状态逐步持久化。
+
 ```mermaid
 sequenceDiagram
     participant C as 调用方
