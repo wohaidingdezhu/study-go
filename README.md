@@ -4,6 +4,8 @@
 
 ## 今天练什么
 
+按 Day 1、Day 2 逐日推进，可以打开 [56 个学习日的计划与路线](docs/day-by-day-study-plan.md)。第一周附有可直接照做的命令、预期结果和排错步骤。
+
 在线打开 [学习工作台](https://wohaidingdezhu.github.io/study-go/)，可以阅读材料、记录练习、做间隔复习。在线进度保存在当前浏览器。
 
 可以在 React 工作台查看任务、记录结果、做闭卷复习，并观察 Agent 的执行事件。从项目根目录运行以下命令，再打开 [本机工作台](http://127.0.0.1:4173)。网页与命令行共享本机进度。 [网页启动与排错](docs/study-system.md#react-工作台)
@@ -33,6 +35,10 @@ AI Agent 可以沿同一个订单项目一起学习。完成 HTTP 对照后，�
 准备开始时，打开 [18 次学习任务和自测](docs/study-workbook.md)。要了解每一阶段对应哪些岗位能力，可以看 [Go 后端学习路线](docs/go-roadmap.md)。路线把公开岗位要求映射到五个学习阶段，每个阶段都有能亲手验证的目标。刚完成第 02 章，可以先跑第 08、09 章，再深入数据和分布式实验。
 
 想直接动手时，打开 [Java / Go 对照练习](exercises/README.md)，先运行测试，再补函数。可以在 [GitHub 项目对照](docs/github-study-references.md) 查看练习设计参考。
+
+读代码时遇到值、引用、集合复制、错误原因或资源释放，可以打开 [Go / Java 代码知识加练](docs/code-foundations.md)，用相同输出对照两种语言的实现。
+
+学习 goroutine、Future、超时或任务取消时，可以继续做 [并发、等待与取消实验](docs/concurrency-and-cancellation.md)，对照任务交付结果和执行收尾的时间线。
 
 | 顺序 | 学习内容 | 可以做什么 |
 | --- | --- | --- |

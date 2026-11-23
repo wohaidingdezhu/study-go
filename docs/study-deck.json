@@ -63,6 +63,39 @@
     ]
   },
   {
+    "id": "code-foundations",
+    "title": "对照值、引用、集合快照、错误和资源生命周期",
+    "guide": "docs/code-foundations.md · 代码知识加练 | go/cmd/language-lab/main.go · Go 注释示例 | java/src/main/java/study/LanguageLab.java · Java 注释示例",
+    "practice": "先预测输出，再运行两种语言的 language-lab。把库存改为 8 或增加一层错误包装，逐段解释输出为何改变，并沿订单源码找同一种机制。",
+    "evidence": "两边的十行基础输出一致。保留一次变式结果，解释共享引用、浅拷贝、错误原因和关闭顺序，指出实际订单代码中的对应位置。",
+    "cards": [
+      {
+        "id": "code-value-reference",
+        "question": "为什么 Go 的结构体赋值可产生独立整数库存，而 Java 示例要显式 new 一个库存对象？Java 传对象参数时复制什么？",
+        "answer": "Go 本例结构体赋值复制整数值，取地址后才通过指针修改同一变量。Java 对象变量赋值复制引用，显式构造新对象可复制本例字段。Java 参数传递按值复制，对象参数复制的是引用值。",
+        "repair": "把两版库存初值改为 8，先算出独立副本和共享引用修改后的数值，再运行。"
+      },
+      {
+        "id": "code-shallow-snapshot",
+        "question": "slices.Clone 或 new ArrayList 后，为什么修改一个库存元素仍可能影响原对象？List.of 能保护元素内部字段吗？",
+        "answer": "浅拷贝复制元素，元素是指针或对象引用时仍共享所指对象。List.of 限制列表结构，已有可变元素仍能更新。独立副本需要按数据结构复制相应字段，并检查嵌套引用。",
+        "repair": "比较 language-lab 的 shallow 与 independent 两段，标出每一个共享的库存对象。"
+      },
+      {
+        "id": "code-error-cause",
+        "question": "底层库存错误加上操作说明后，上层怎样仍能识别业务失败？Go errors.Is 与 Java 示例 getCause 的检查范围有何区别？",
+        "answer": "Go 用 %w 保留原因，errors.Is 沿错误链匹配。Java 构造异常时传入 cause，getCause 取得直接原因；多层包装时需继续沿链定位。增加包装后应验证上层错误映射仍符合 HTTP 契约。",
+        "repair": "分别再加一层包装，比较 errors.Is 与只调用一次 getCause 的结果。"
+      },
+      {
+        "id": "code-resource-scope",
+        "question": "defer 与 try-with-resources 在什么时候关闭资源？为什么 Go 循环中不断 defer 关闭可能占用太多资源？",
+        "answer": "defer 在当前函数退出时执行，try-with-resources 在退出对应 try 块时关闭。函数内长循环不断取得资源并 defer，会把关闭推迟到函数返回，应按实际使用范围安排资源生命周期。",
+        "repair": "运行资源示例，核对 use、close、returned 的顺序，再在真实 SQL 查询处找到关闭边界。"
+      }
+    ]
+  },
+  {
     "id": "idempotency",
     "title": "用测试把下单重试契约钉住",
     "guide": "docs/02-http.md · 下单重试 | docs/08-tests.md · 两语言测试",
@@ -224,6 +257,39 @@
         "question": "relay 已收到发布确认并写入 published_at，能否据此证明通知已经落库？还要核对什么？",
         "answer": "发布侧记录 broker 接收发布的结果，还需检查 mandatory 的退回通知确认路由。消费结果要用同一 eventId 查通知表及 Java 日志，消费者在写库后才 ACK。",
         "repair": "分别找到 relay 的 WaitContext、退回检查与 Java 的 basicAck，再按第 07 章核对 outbox 和通知表。"
+      }
+    ]
+  },
+  {
+    "id": "async-cancellation",
+    "title": "对照并发结果、等待超时与协作式取消",
+    "guide": "docs/concurrency-and-cancellation.md · 并发与取消加练 | go/cmd/cancellation-lab/main.go · Go 取消示例 | java/src/main/java/study/CancellationLab.java · Java 取消示例",
+    "practice": "先读现有并发库存的提交与汇总顺序，再在两种语言运行 cancellation-lab 的 success、timeout 和 failure。画出等待超时、取消请求和工作函数收尾的位置。",
+    "evidence": "保存两种语言三种模式的输出，指出 context 与线程中断如何到达工作函数，并用真实 HTTP 实验或 Agent worker 解释预算与提交边界。",
+    "cards": [
+      {
+        "id": "async-result-collection",
+        "question": "为什么先提交所有任务再逐个 Future.get 仍可以并发？Go 当前示例先 Wait 再读 channel，对缓冲容量有何要求？",
+        "answer": "任务在 get 循环前已经提交并可同时推进。Go 示例每个任务发送一次，容量容纳所有结果，发送者才可在主 goroutine 开始读取前结束；容量不足且无并发接收时会形成相互等待。",
+        "repair": "画出现有 Concurrency 示例中的提交、发送、完成登记和汇总顺序，标出有谁在等待谁。"
+      },
+      {
+        "id": "async-cooperative-cancel",
+        "question": "Future.get 等待超时后，任务会自动结束吗？cancel(true) 返回 true 与工作函数的 finally 已执行有何区别？",
+        "answer": "等待超时结束本次等待。cancel(true) 请求取消并允许中断，任务需要响应中断。Future 接受取消与工作代码收尾是不同事件，本例用 finished 信号观察 finally。Go 下游同样需要主动响应 context。",
+        "repair": "运行两版 timeout 模式，沿源码标注等待结果、发出取消和收到收尾信号的位置。"
+      },
+      {
+        "id": "async-total-budget",
+        "question": "总预算 500ms，第一段已用 400ms，第二段怎样等待？Java 每个 get 都重新给 500ms 会怎样？",
+        "answer": "等待应根据统一截止时间计算剩余约 100ms，并计入后续收尾需要。Go 传同一个带截止时间的 context，Java 用单调时钟计算剩余时间。每段重开完整等待会累计超过原总预算。",
+        "repair": "对照 service-lab 的两次请求和重试等待，画出共享预算，再写出 Java 的剩余时间计算。"
+      },
+      {
+        "id": "async-side-effect-boundary",
+        "question": "客户端超时并请求取消后，为什么仍要检查订单是否创建？工具执行成功但检查点没提交时又会怎样？",
+        "answer": "响应等待和服务器业务提交各有边界，提交可能已发生。订单应沿原幂等键查询或重试；Agent 从旧检查点接手可能再调用工具，写操作需稳定幂等键和结果查询。",
+        "repair": "分别画出订单提交后响应丢失、工具完成后检查点丢失的时间线，指出去重与确认结果的位置。"
       }
     ]
   },

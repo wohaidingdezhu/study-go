@@ -31,6 +31,8 @@ invalid item: quantity must be positive
 
 Go 切片复制的是描述切片的数据，两个切片可能共享底层数组。`append` 可能分配新数组，要接住返回值。Java 的 `List.of` 返回不可修改的列表。两种语言都需要区分集合本身的可变性和内部元素的可变性。 [Effective Go](https://go.dev/doc/effective_go) · [Java Learn](https://dev.java/learn/)
 
+想把这些概念变成可观察的结果，可以继续做 [代码知识加练](code-foundations.md)，运行同一组值复制、集合快照、错误包装和资源释放实验。两份代码均在关键位置提供中文注释。
+
 ## 库存为零和查无商品
 
 试着先预测输出。商品 1 有 5 件，商品 2 已售罄，商品 999 没有录入。然后运行两版代码。
@@ -86,3 +88,5 @@ java java/src/main/java/study/Concurrency.java
 1. 新增一种实现 `Priced` 的运费，固定 500 分。把它放进同一组明细，验证总额变为 3200 分。
 2. 把库存改成 1，并发任务改成 20。预期只有 1 个成功。说出 Go 示例为什么由主 goroutine 在 `Wait()` 后关闭 channel。
 3. 用 Go 的 `go run -race ./cmd/concurrency` 观察竞态检测。临时拿掉锁再多跑几次，然后恢复锁。
+
+继续阅读 [并发、等待与取消](concurrency-and-cancellation.md)，解释为什么先提交任务再逐个取结果仍可并发，以及 channel 缓冲容量与等待顺序怎样配合。

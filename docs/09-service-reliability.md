@@ -20,6 +20,8 @@
 
 打开 [实验代码](../go/cmd/service-lab/main.go)，沿着 `main → readWithRetry → readStock` 看。两次尝试和中间等待共用一个 context。把 `-fail-first`、`-budget 120ms`、`-delay 600ms` 一起传入，观察为什么第二次请求也会在原预算用完时结束。 [Go context](https://go.dev/blog/context)
 
+可以结合 [Go / Java 并发、等待与取消](concurrency-and-cancellation.md) 对照 goroutine、Future、结果汇总与协作式取消，再回到本章的真实 HTTP 代码核对预算传播。
+
 ## 时间花在哪里
 
 | 层 | 读什么 | 能防什么 |
