@@ -10,7 +10,7 @@ import re
 import sqlite3
 from urllib.parse import parse_qs, urlsplit
 
-from study import DEFAULT_DB, INTERVALS, ROOT, due_cards, grade_card, init_progress, load_deck, record_practice
+from study import DEFAULT_DB, INTERVALS, ROOT, due_cards, grade_card, init_progress, load_deck, record_practice, sync_review_cards
 
 
 DIST = ROOT / "web/dist"
@@ -96,6 +96,7 @@ class StudyHandler(BaseHTTPRequestHandler):
             if path == "/api/study" and self.command == "GET":
                 with db:
                     db.execute("BEGIN")
+                    sync_review_cards(db, tasks)
                     evidence = dict(db.execute("SELECT task_id, evidence FROM practice"))
                     queue = due_cards(db, cards)
                 return {

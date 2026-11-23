@@ -43,6 +43,17 @@ def due_cards(db, cards):
     return [row for row in rows if row[0] in cards]
 
 
+def sync_review_cards(db, tasks):
+    # 只给已经记录证据的练习补题。课程新增卡片后，旧进度也能继续学习新内容。
+    # ON CONFLICT 保留原卡的评分和日期，事务由调用方管理，与进度读写一起提交。
+    today = date.today().isoformat()
+    db.executemany("""
+        INSERT INTO review (card_id, streak, due)
+        SELECT ?, 0, ? WHERE EXISTS (SELECT 1 FROM practice WHERE task_id = ?)
+        ON CONFLICT (card_id) DO NOTHING
+    """, [(card["id"], today, task["id"]) for task in tasks.values() for card in task["cards"]])
+
+
 def grade_card(db, card_id, streak, previous_due, correct):
     today = date.today()
     delay = INTERVALS[streak] if correct else 1
@@ -79,17 +90,13 @@ def show_today(db, tasks, cards):
 
 
 def record_practice(db, task, evidence):
-    today = date.today().isoformat()
     # 练习证据和新卡片一起提交。重复更新证据时保留已有复习进度。
     with db:
         db.execute("""
             INSERT INTO practice (task_id, evidence) VALUES (?, ?)
             ON CONFLICT (task_id) DO UPDATE SET evidence = excluded.evidence
         """, (task["id"], evidence))
-        db.executemany("""
-            INSERT INTO review (card_id, streak, due) VALUES (?, 0, ?)
-            ON CONFLICT (card_id) DO NOTHING
-        """, [(card["id"], today) for card in task["cards"]])
+        sync_review_cards(db, {task["id"]: task})
 
 
 def complete(db, task, evidence):
@@ -158,6 +165,8 @@ def main():
     init_progress(args.db)
     db = sqlite3.connect(args.db)
     try:
+        with db:
+            sync_review_cards(db, tasks)
         if args.command == "today":
             show_today(db, tasks, cards)
         elif args.command == "progress":

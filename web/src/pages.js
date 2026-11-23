@@ -45,8 +45,24 @@ async function readGuide(name, signal) {
 export async function pagesRequest(path, options) {
   const url = new URL(path, location.origin);
   if (url.pathname === '/api/study') {
-    const { notes, reviews } = readProgress();
+    const progress = readProgress();
     const today = dateAfter();
+    const missingCards = [];
+    for (const task of deck) {
+      if (!progress.notes[task.id]) continue;
+      for (const card of task.cards) {
+        if (!progress.reviews[card.id]) missingCards.push({ taskId: task.id, cardId: card.id });
+      }
+    }
+    if (missingCards.length) {
+      // 锁内重新读取进度。另一标签页刚评分的题目保留原日期，只给已完成练习补缺失题。
+      await writeProgress(({ notes, reviews }) => {
+        for (const { taskId, cardId } of missingCards) {
+          if (notes[taskId]) reviews[cardId] ??= { date: today, streak: 0 };
+        }
+      });
+    }
+    const { notes, reviews } = readProgress();
     return {
       tasks: deck.map(({ cards: _cards, ...task }) => ({ ...task, note: notes[task.id] ?? null })),
       due: Object.entries(reviews)

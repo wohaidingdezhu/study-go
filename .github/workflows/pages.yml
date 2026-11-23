@@ -27,7 +27,9 @@ jobs:
           cache-dependency-path: labs/stack/go.sum
       - run: go test ./...
         working-directory: labs/stack
+      - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - run: npm --prefix web ci
+      - run: npm --prefix web test
       - run: npm --prefix web run build:pages
       - uses: actions/upload-pages-artifact@v3
         with:
