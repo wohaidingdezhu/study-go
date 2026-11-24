@@ -2,7 +2,7 @@
   {
     "id": "http",
     "title": "用同一请求走通 Go 和 Java",
-    "guide": "docs/02-http.md · 亲手创建订单并重试",
+    "guide": "docs/02-http.md · 亲手创建订单并重试 | docs/08-tests.md · 自动验证 HTTP 契约",
     "practice": "先写出预测，再在 Go 8080 和 Java 8081 的内存服务各做一次商品查询、无效数量下单和正常下单。沿 handler 找到存储层。",
     "evidence": "两边的 200、400、201 和 Location。说明路径参数、JSON 请求体与请求头各放了什么。",
     "cards": [
@@ -17,6 +17,12 @@
         "question": "画出下单调用链。JSON 解析、库存规则、HTTP 状态映射分别在哪层？Go 和 Java 的业务错误怎样返回？",
         "answer": "HTTP 层解析参数和 JSON，存储层判断库存等规则，HTTP 层把业务结果映射为状态码。Go 返回 error 并用 errors.Is 匹配，Java 抛 Rejected 并在 HTTP 层捕获。",
         "repair": "从 go/order/http.go 和 OrderServer.java 各找一处状态映射，继续跳转到存储方法。"
+      },
+      {
+        "id": "http-rejection-state",
+        "question": "非法下单得到了预期的 400，为什么测试还查库存、订单和原键？Go 的 Handler 测试有没有验证 TCP 监听？",
+        "answer": "错误响应可能正确而状态已经被修改，还要确认库存保持 5、订单数为 0，使用合法键的失败请求在纠正输入后仍可首次创建。Go 用 ResponseRecorder 直接调用 Handler，不验证 TCP 监听；Java 本例在临时回环端口发真实 HTTP，两者都使用独立内存存储。",
+        "repair": "打开两版 HTTP 拒绝测试，找到错误、库存、订单和纠正后下单四组断言，再指出各自的数据准备与清理位置。"
       }
     ]
   },
@@ -113,6 +119,12 @@
         "question": "同一个键从 quantity=1 改成 quantity=2，为什么两次结果不能合并？怎样和库存不足区分？",
         "answer": "参数已经变成另一笔业务请求，应返回 409 idempotency_conflict。库存不足同为 409，正文错误码是 out_of_stock。",
         "repair": "分别构造两类 409，逐项记录错误码和修改前后的库存。"
+      },
+      {
+        "id": "idempotency-http-contract",
+        "question": "首次创建 201、重放 200 且 ID 相同，还要检查什么才能完整验证本例的 HTTP 幂等链路？",
+        "answer": "按 Location 可查回原订单，重放保留同一 Location；同键改参返回 409 idempotency_conflict；最终只有一笔订单且库存从 5 变为 4。只比较 ID 会漏掉重复扣库存或额外建单，HTTP 响应还应符合 JSON 与请求 ID 约定。",
+        "repair": "合上实现写出创建、查询、重放、改参和最终状态五步，再运行 TestHTTPOrderReplayContract 与 OrderHttpTest 的 orderReplayContract。"
       }
     ]
   },

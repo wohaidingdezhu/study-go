@@ -46,7 +46,8 @@ public class OrderServer {
         System.out.println("Java order API: http://127.0.0.1:" + port);
     }
 
-    private void handle(HttpExchange exchange) throws IOException {
+    // 同包测试复用真正的请求入口；每个新 OrderServer 都有独立内存存储。
+    void handle(HttpExchange exchange) throws IOException {
         long started = System.nanoTime();
         var suppliedId = exchange.getRequestHeaders().getFirst("X-Request-ID");
         var requestId = suppliedId != null && HEADER_ID.matcher(suppliedId).matches()

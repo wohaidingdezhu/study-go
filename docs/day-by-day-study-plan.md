@@ -271,9 +271,9 @@ Day 3 的 Catalog 是独立的语法演示，其中录入了商品 2。这里的
 
 | 学习日 | 学什么、看哪里 | 当天动手 | 验收与闭卷问题 |
 | --- | --- | --- | --- |
-| **Day 8** | 请求头、请求体、参数校验与创建响应。[HTTP 下单](02-http.md) | 在两种语言中分别提交一笔合法订单和一笔数量为 0 的请求。读 handler 的 JSON 解析与校验。 | 记录 201、400、`Location` 和库存变化。完成 `http`。 |
+| **Day 8** | 请求头、请求体、参数校验与创建响应。[HTTP 下单](02-http.md) · [HTTP 契约测试](08-tests.md#自动验证-http-契约) | 在两种语言中分别提交一笔合法订单和一笔数量为 0 的请求。先预测三个边界用例，再读 handler 的 JSON 校验。 | 记录 201、400、`Location` 和库存变化。完成 `http`。 |
 | **Day 9** | 幂等与同键冲突。[HTTP 重试](02-http.md) · [订单测试](08-tests.md) | 用原键原参数重放成功订单，再用相同键改数量，分别核对订单 ID 和库存。 | 重放返回原订单且不重复扣库存，改参得到 409。完成 `idempotency`。客户端超时后为何仍用原键？ |
-| **Day 10** | 自动测试、错误原因和资源边界。[测试步骤](08-tests.md) · [代码知识加练](code-foundations.md) | 改错一个库存断言再恢复；对照两版 `errorDemo` 与 `useResource`，观察包装和关闭顺序。 | 能定位实际与预期，解释 Day 4 的复制实验以及本次错误与清理行为，完成 `code-foundations`。 |
+| **Day 10** | 自动测试、错误原因和资源边界。[测试步骤](08-tests.md) · [代码知识加练](code-foundations.md) | 改错一个断言再恢复；跑两版 HTTP 契约测试，数量 -1 的变式可顺延。对照 `errorDemo` 与 `useResource` 的包装和关闭顺序。 | 能定位实际与预期，证明拒绝下单没有改变库存或订单，解释 Day 4 的复制实验及本次清理行为，完成 `code-foundations`。 |
 | **Day 11** | goroutine、线程、锁与结果汇总。[并发扣库存](01-languages.md#并发扣库存) · [提交和汇总](concurrency-and-cancellation.md) | 把演示改为 1 件库存、20 次尝试，两边各重复运行三次。标出共享状态、临界区与取结果的位置。 | 每次只有 1 次成功且库存为 0。完成 `concurrency`，解释 Future.get 与 channel 汇总的等待顺序。 |
 | **Day 12** | Electron Main、Renderer、Preload、IPC 与隔离。[桌面商品查询](../labs/electron-orders/README.md) | 用同一个窗口查两套后端，比较 200、404，再停止这次启动的 Java 服务并重查。 | Go 仍能独立返回，窗口显示 Java 连接故障。用同一个请求 ID 找两边日志，完成 `electron-ipc`。 |
 | **Day 13** | Agent 的输入、工具请求、结果回填与回答。[短循环练习](agent-app-roadmap.md#现在就能做的三项练习) | 用 `trace` 分别输入 Redis 故障与“如何烤面包？”，逐条读事件。 | 能解释三步事件及无匹配时的空引用。达到任务验收后记录 `agent-loop`，以后继续做变式。 |

@@ -10,6 +10,26 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: java/pom.xml
+      # 入门模块与进阶栈分别检查；接口测试各自创建内存数据。
+      - run: go test -race ./...
+        working-directory: go
+      - run: mvn --batch-mode --no-transfer-progress -f java/pom.xml test
+
   build:
     runs-on: ubuntu-latest
     permissions:
@@ -36,7 +56,7 @@ jobs:
           path: web/dist-pages
 
   deploy:
-    needs: build
+    needs: [build, contracts]
     runs-on: ubuntu-latest
     permissions:
       pages: write
