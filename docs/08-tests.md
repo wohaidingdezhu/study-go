@@ -53,7 +53,7 @@ Go 测试放在 `order_test` 包里，只使用对外公开的存储方法。Jav
 mvn -f java/pom.xml -Dtest=OrderHttpTest test
 ```
 
-Go 显示两个顶层 HTTP 测试通过，其中拒绝测试包含 18 个子用例。Java 的 `OrderHttpTest` 显示 `Tests run: 19, Failures: 0, Errors: 0, Skipped: 0`：18 次参数化拒绝测试，加一次创建与重试链路。
+Go 显示四个顶层 HTTP 测试通过。Java 的 `OrderHttpTest` 显示 `Tests run: 34, Failures: 0, Errors: 0, Skipped: 0`：18 次拒绝下单测试、一次创建与重试链路、14 次非法分页测试及一次分页链路。本节先读下单测试，分页部分留到 [第 16 章](16-order-history-api.md#自动验证分页边界) 对照。
 
 打开 [Go HTTP 测试](../go/order/http_test.go) 和 [Java HTTP 测试](../java/src/test/java/study/OrderHttpTest.java)，先找到输入表，再找发送请求和断言的位置。两边使用相同的场景名称，方便逐行对照。
 

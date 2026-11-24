@@ -119,6 +119,51 @@ class OrderHttpTest {
         return response;
     }
 
+    static Stream<String> invalidQueries() {
+        // 同 Go 的 14 个边界：包含编码后的重复键，以及编码后的分隔符。
+        return Stream.of("limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=", "before=0", "before=",
+                "before=9223372036854775808", "unknown=1", "limit=1&limit=2", "limit=1&%6cimit=2",
+                "limit=2%26before%3D3", "=1", "limit");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("invalidQueries")
+    void rejectsInvalidPagination(String query) throws Exception {
+        var failure = json(call("GET", "/orders?" + query, "", "", ""), 400);
+        assertEquals("invalid_pagination", failure.path("error").asText());
+    }
+
+    @Test
+    void paginationCursorContract() throws Exception {
+        assertPage(readPage("/orders"), new long[]{}, null);
+        var ids = new long[4];
+        for (int n = 0; n < 4; n++) {
+            ids[n] = json(call("POST", "/orders", "page-" + n, "application/json", VALID_ORDER), 201).path("id").asLong();
+        }
+        var first = readPage("/orders?limit=2");
+        assertPage(first, new long[]{ids[3], ids[2]}, ids[2]);
+        // 插入第五笔后，旧游标仍限定 id < 本页最后一个 ID，不是固定查询快照。
+        long newest = json(call("POST", "/orders", "page-new", "application/json", VALID_ORDER), 201).path("id").asLong();
+        assertPage(readPage("/orders?limit=2&before=" + first.path("nextCursor").asLong()), new long[]{ids[1], ids[0]}, null);
+        assertPage(readPage("/orders?limit=1&before=" + ids[1]), new long[]{ids[0]}, null);
+        assertPage(readPage("/orders?before=" + ids[0]), new long[]{}, null);
+        assertPage(readPage("/orders?limit=1"), new long[]{newest}, newest);
+    }
+
+    private JsonNode readPage(String path) throws Exception {
+        return json(call("GET", path, "", "", ""), 200);
+    }
+
+    private void assertPage(JsonNode page, long[] ids, Long cursor) {
+        // 检查具体 ID 和顺序，而不是只检查条数，才能发现重复、遗漏或错序。
+        var items = page.path("items");
+        assertTrue(items.isArray());
+        assertEquals(ids.length, items.size());
+        for (int i = 0; i < ids.length; i++) assertEquals(ids[i], items.get(i).path("id").asLong());
+        if (cursor == null) assertTrue(page.path("nextCursor").isNull());
+        else assertEquals(cursor.longValue(), page.path("nextCursor").asLong());
+    }
+
     private JsonNode json(HttpResponse<String> response, int status) throws Exception {
         assertEquals(status, response.statusCode(), response.body());
         return JSON.readTree(response.body());

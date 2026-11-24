@@ -174,8 +174,8 @@
     "id": "pagination",
     "title": "让列表能安全翻页",
     "guide": "exercises/order-history/README.md | docs/16-order-history-api.md | docs/10-sql-performance.md",
-    "practice": "分别补全两版游标练习，跑既有测试，再请求真实接口的前两页。额外验证已经是末页时 nextCursor 的值。",
-    "evidence": "两边边界测试通过，真实 API 的两页订单 ID 无重叠，末页 nextCursor 为 null。",
+    "practice": "分别补全两版游标练习，再运行双语言 HTTP 分页测试。先预测两页之间插入订单的结果，核对实际 ID、排序及末页游标。",
+    "evidence": "两边边界测试通过，两页包含预期的全部旧订单且无重叠，末页 nextCursor 为 null。解释新增大 ID 为什么在重新从头查询时出现。",
     "cards": [
       {
         "id": "pagination-cursor",
@@ -188,6 +188,18 @@
         "question": "给订单列表加商品筛选时，筛选应该发生在 limit 之前还是之后？给一个会出错的例子。",
         "answer": "先按商品和游标过滤，再取 limit+1。例如最新两单都不是目标商品，先限两条会错误返回空页，尽管后面还有目标订单。",
         "repair": "给临时测试准备两种商品交错的订单，断言目标商品第一页能填满。"
+      },
+      {
+        "id": "pagination-no-omission",
+        "question": "内部读到 4、3、2，limit=2 时为什么不能把游标设为 2？仅检查两页没有重复够不够？",
+        "answer": "本页返回 4、3，游标应为 3。若游标为 2，下一页 id<2 会漏掉订单 2，但仍没有重复。应检查完整 ID、顺序和游标；刚好满页但没有额外数据时，游标也应为空。",
+        "repair": "用四条订单手算错误游标造成的遗漏，再运行两版分页链路测试。"
+      },
+      {
+        "id": "pagination-between-pages",
+        "question": "读完 4、3 后插入订单 5，再用 before=3 翻页会得到什么？这是否代表固定快照？",
+        "answer": "本例第二页仍为 2、1，新订单 5 在重新从头查询时出现。旧游标只限定 ID 范围，不是固定快照；并发删除、更新或其他写入模式需要按具体业务另行分析。",
+        "repair": "在 TestHTTPPaginationCursorContract 或 Java paginationCursorContract 中标出两次读取之间的创建操作，先预测后运行。"
       }
     ]
   },

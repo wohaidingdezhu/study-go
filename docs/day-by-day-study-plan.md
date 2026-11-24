@@ -331,7 +331,7 @@ bash scripts/practice-stack.sh exec -T postgres psql -U study -d orders < labs/p
 | **Day 24** | Java 事务回滚和跨实例幂等。[Java 隔离验收](../labs/spring-orders/README.md) | 运行模块的 `check.py`，对照强制写入失败与两个 API 实例处理同键请求的检查。 | 能解释库存、幂等键和订单的预期状态，记录证据并完成 `spring-mysql`。 |
 | **Day 25** | 游标分页的边界与测试。[分页对照题](../exercises/order-history/README.md) | 先完成 Go 的待填函数，覆盖空结果、第一页、下一页和末页。 | Go 练习检查通过，能手算一组 ID 的分页结果。 |
 | **Day 26** | 把同一分页规则写到 Java。[分页对照题](../exercises/order-history/README.md) | 合上 Go 实现，按相同输入完成 Java 版，再对照集合、比较与截取。 | 两边都通过，解释边界条件怎样保持一致。 |
-| **Day 27** | 真实 API 的 `limit+1` 与 `nextCursor`。[翻两页订单](16-order-history-api.md) | 按章节准备订单并翻页，比较 Go、Java 和 PostgreSQL 的结果。 | 两页无重复、顺序正确、末页游标为空，完成 `pagination`。 |
+| **Day 27** | 真实 API 的 `limit+1` 与 `nextCursor`。[翻两页订单](16-order-history-api.md#自动验证分页边界) | 先手算两页之间插入新订单的结果，再跑双语言分页测试；有余力时对照 PostgreSQL。 | 两页 ID 完整、顺序正确、末页游标为空，解释旧游标为什么不含新插入的大 ID，完成 `pagination`。 |
 | **Day 28** | 第四周复盘 | 闭卷画出 Spring 下单事务，再写一段不看参考解的分页伪代码。 | 能解释运行时异常的回滚、游标的取值，以及过滤与 LIMIT 的先后顺序。 |
 
 ## 第五阶段 · 缓存与消息链路

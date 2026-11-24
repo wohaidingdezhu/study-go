@@ -61,3 +61,55 @@ PostgreSQL 版复用 Go 的 HTTP 层。 [SQL 存储](../labs/stack/store.go) 使
 ### 练习
 
 用另一种语言的内存服务重跑相同命令。每页改成 1 条，记录三个响应的游标。接着在新的空练习库运行 [同一组接口检查](../scripts/check-orders.py)，看看它如何确认结果不重不漏。准备修改接口时，去做 [综合练习的商品筛选](15-capstone.md#任务二给订单历史加商品筛选)。
+
+## 自动验证分页边界
+
+Day 27 可用下面的命令验证两种语言的真实 HTTP 入口。测试各自准备独立内存数据，无需启动常用端口或 Docker，不会消耗你正在使用的练习库存。
+
+```bash
+(cd go && go test -v ./order -run '^TestHTTPPagination')
+mvn -f java/pom.xml '-Dtest=OrderHttpTest#rejectsInvalidPagination+paginationCursorContract' test
+```
+
+Go 有两个顶层测试，参数拒绝部分包含 14 个子用例；Java 本次选择运行 15 个测试，预期失败和错误均为 0。测试的准备、断言和资源清理方式见 [第 08 章](08-tests.md#两种语言怎样组织隔离测试)。[Go 测试源码](../go/order/http_test.go) · [Java 测试源码](../java/src/test/java/study/OrderHttpTest.java)
+
+### 一次只改变一个查询条件
+
+| 输入类型 | 例子 | 预期 |
+| --- | --- | --- |
+| 数量范围 | `limit=0`、`limit=101` | `400 invalid_pagination` |
+| 数值表达 | `limit=-1`、`limit=1.5`、`limit=` | 同上 |
+| 游标边界 | `before=0`、`before=`、大于有符号 64 位整数上限 | 同上 |
+| 参数结构 | 未知参数、空参数名、缺少等号、重复 `limit` | 同上 |
+| 编码后的重复键 | `limit=1&%6cimit=2` | `%6c` 解码为 `l`，两个键都叫 `limit`，仍要拒绝 |
+| 编码后的分隔符 | `limit=2%26before%3D3` | 解码后的值是 `2&before=3`，不是整数，应拒绝 |
+
+先按原始 `&` 划分参数边界，再分别解码键和值。把整个查询串解码后再拆分，会把某个值里的编码分隔符误当成新参数。Go 入口交给 `url.ParseQuery`，Java 入口先拆分再 `URLDecoder.decode`，可沿源码注释对照。 [Go ParseQuery](https://pkg.go.dev/net/url#ParseQuery) · [Java URLDecoder](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/net/URLDecoder.html)
+
+### 先手算，再运行插入场景
+
+独立内存服务的前四笔订单 ID 为 1、2、3、4，每笔买一件。测试读取每次创建实际返回的 ID，不把连续 ID 当成数据库通用约定。
+
+| 步骤 | 请求或操作 | 预期 ID 顺序 | nextCursor |
+| --- | --- | --- | --- |
+| 空库 | `GET /orders` | `[]`，不能用 `null` 代替数组 | `null` |
+| 第一页 | `limit=2` | `[4,3]` | `3` |
+| 翻页前插入 | 再创建订单 5 | 第一页响应保持原样 | 使用已有游标 3 |
+| 第二页 | `limit=2&before=3` | `[2,1]` | `null` |
+| 满页但读完 | `limit=1&before=2` | `[1]` | `null` |
+| 最小 ID 之后 | `before=1` | `[]` | `null` |
+| 重新从头读 | `limit=1` | `[5]` | `5`，后面仍有旧订单 |
+
+第一页为了判断还有数据，会向存储多要一条，内部读到 `[4,3,2]`。响应返回 `[4,3]`，游标必须为 3。若误用多读那条的 ID 2，下一页按 `id < 2` 只返回 `[1]`，订单 2 被漏掉，虽然两页仍然“没有重复”。因此测试同时断言完整 ID、排序与游标，不能只比较条数或检查集合无交集。
+
+刚好返回 `limit` 条也不代表还有下一页。例如只剩订单 1、`limit=1`，多读一条没有拿到额外数据，游标应为空。
+
+这个插入实验说明当前接口的范围条件是 `id < before`：新插入的大 ID 不进入旧游标后续的页，需要从头浏览才能看到。本实验没有建立固定查询快照，也没有证明并发删除或字段更新时能保留旧结果。对账、导出等需要固定集合的业务，应另行定义一致性需求和查询方案。
+
+### 做一次能暴露遗漏的变式
+
+1. 合上源码，先画出错误游标取 2 时的两页结果，说出哪一项被漏掉。
+2. 在本机 Go `TestHTTPPaginationCursorContract` 或 Java `paginationCursorContract` 的第一页游标断言中，暂时把期望改成多读的那条 ID。重跑测试，找到实际与期望，再恢复。
+3. 改为每页一条，预测新增订单发生在两页之间时，旧游标后续返回哪些旧 ID；再补断言核对。每次只改一个条件。
+
+保留一次失败与修复后的输出，用 `python3 scripts/study.py practice pagination` 对照验收。新复习卡会沿用已有任务与进度。

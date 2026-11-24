@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -33,6 +34,66 @@ func callHTTP(t *testing.T, handler http.Handler, method, path, key, contentType
 		t.Fatalf("request ID was not returned: %v", response.Header())
 	}
 	return response
+}
+
+func TestHTTPPaginationRejectsInvalidQueries(t *testing.T) {
+	// 编码后的参数先解码再校验；重复键不能悄悄覆盖前一个值。
+	queries := []string{"limit=0", "limit=101", "limit=-1", "limit=1.5", "limit=", "before=0", "before=",
+		"before=9223372036854775808", "unknown=1", "limit=1&limit=2", "limit=1&%6cimit=2",
+		"limit=2%26before%3D3", "=1", "limit"}
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			handler := order.HTTPServer("", order.NewMemoryStore()).Handler
+			failure := responseJSON[map[string]string](t, callHTTP(t, handler, "GET", "/orders?"+query, "", "", ""), 400)
+			if failure["error"] != "invalid_pagination" {
+				t.Fatalf("wrong error: %v", failure)
+			}
+		})
+	}
+}
+
+type testOrderPage struct {
+	Items      []order.Order `json:"items"`
+	NextCursor *int64        `json:"nextCursor"`
+}
+
+func TestHTTPPaginationCursorContract(t *testing.T) {
+	handler := order.HTTPServer("", order.NewMemoryStore()).Handler
+	readPage := func(path string) testOrderPage {
+		response := callHTTP(t, handler, "GET", path, "", "", "")
+		// nil 指针本身无法区分“字段缺失”和“显式 null”，另查一次字段是否存在。
+		fields := responseJSON[map[string]json.RawMessage](t, response, 200)
+		if _, exists := fields["nextCursor"]; !exists {
+			t.Fatal("nextCursor field is missing")
+		}
+		return responseJSON[testOrderPage](t, response, 200)
+	}
+	assertPage := func(page testOrderPage, ids []int64, cursor *int64) {
+		t.Helper()
+		actual := make([]int64, 0, len(page.Items))
+		for _, value := range page.Items {
+			actual = append(actual, value.ID)
+		}
+		if page.Items == nil || !reflect.DeepEqual(actual, ids) || !reflect.DeepEqual(page.NextCursor, cursor) {
+			t.Fatalf("page=%+v ids=%v; want ids=%v cursor=%v and JSON array", page, actual, ids, cursor)
+		}
+	}
+	assertPage(readPage("/orders"), []int64{}, nil)
+	ids := make([]int64, 0, 4)
+	for n := 0; n < 4; n++ {
+		value := responseJSON[order.Order](t, callHTTP(t, handler, "POST", "/orders", "page-"+strconv.Itoa(n), "application/json", validOrder), 201)
+		ids = append(ids, value.ID)
+	}
+	first := readPage("/orders?limit=2")
+	assertPage(first, []int64{ids[3], ids[2]}, &ids[2])
+	// 在两页之间插入更大的 ID。沿旧游标继续读时，新记录留给下一轮浏览。
+	newest := responseJSON[order.Order](t, callHTTP(t, handler, "POST", "/orders", "page-new", "application/json", validOrder), 201)
+	second := readPage("/orders?limit=2&before=" + strconv.FormatInt(*first.NextCursor, 10))
+	assertPage(second, []int64{ids[1], ids[0]}, nil)
+	// 恰好满页但没有多读到一条时，游标也应为空。
+	assertPage(readPage("/orders?limit=1&before="+strconv.FormatInt(ids[1], 10)), []int64{ids[0]}, nil)
+	assertPage(readPage("/orders?before="+strconv.FormatInt(ids[0], 10)), []int64{}, nil)
+	assertPage(readPage("/orders?limit=1"), []int64{newest.ID}, &newest.ID)
 }
 
 func responseJSON[T any](t *testing.T, response *httptest.ResponseRecorder, status int) T {
